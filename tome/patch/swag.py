@@ -34,7 +34,7 @@ def make_block_class(block_cls):
             attn_size = (
                 self._tome_info["size"] if self._tome_info["prop_attn"] else None
             )
-            x_attn, metric = self.self_attention(x, size=attn_size) // https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html
+            x_attn, metric = self.self_attention(x, size=attn_size) // ttn_output, attn_output_weights = multihead_attn(query, key, value)
             x = self.dropout(x_attn)
             x = x + input
 
