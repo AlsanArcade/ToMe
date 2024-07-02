@@ -36,7 +36,8 @@ class ToMeBlock(Block):
         attn_size = self._tome_info["size"] if self._tome_info["prop_attn"] else None
         x_attn, metric = self.attn(self.norm1(x), attn_size) 
         #*timm:* self.attn = Attention(dim, ~optional_params~...
-        #*VIM:* self.mixer = mixer_cls(dim)
+        #*VIM:* self.mixer = mixer_cls(dim) ->
+        # 
         x = x + self._drop_path1(x_attn)
 
         r = self._tome_info["r"].pop(0)

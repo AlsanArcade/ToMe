@@ -8,11 +8,54 @@
 # timm: https://github.com/rwightman/pytorch-image-models/tree/master/timm
 # --------------------------------------------------------
 
+# Mehrere wrapper-> mamba patchen, letzte mlp wird aus der forward funktion genommen, 
+# dann ein wrapper, der die neue mamba mit einer anderen klasse, welche das forward enthält, in einer forward verbindet
+# dann in mamba die mamba_inner_fn_no_out_proj funktion anpassen, dass für den merge relevante dinge zurückgegeben werden
+import math
+from typing import Optional
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
 
 from typing import Tuple
 
 import torch
-from timm.models.vision_transformer import Attention, Block, VisionTransformer
+
+from mamba_ssm.modules.mamba_simple import Mamba
+import sys
+from vim import models_mamba, mamba_simple
+
+import math
+from typing import Optional
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
+
+from einops import rearrange, repeat
+
+try:
+    from causal_conv1d import causal_conv1d_fn, causal_conv1d_update
+except ImportError:
+    causal_conv1d_fn, causal_conv1d_update = None
+
+try:
+    from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, mamba_inner_fn, bimamba_inner_fn, mamba_inner_fn_no_out_proj
+except ImportError:
+    selective_scan_fn, mamba_inner_fn, bimamba_inner_fn, mamba_inner_fn_no_out_proj = None, None, None, None, None
+
+try:
+    from mamba_ssm.ops.triton.selective_state_update import selective_state_update
+except ImportError:
+    selective_state_update = None
+
+try:
+    from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
+except ImportError:
+    RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
 from tome.merge import bipartite_soft_matching, merge_source, merge_wavg
 from tome.utils import parse_r
@@ -24,19 +67,37 @@ class ToMeBlock(Block):
      - Apply ToMe between the attention and mlp blocks
      - Compute and propogate token size and potentially the token sources.
     """
+    def forward(
+        self, hidden_states: Tensor, residual: Optional[Tensor] = None, inference_params=None
+    ):
+        r"""Pass the input through the encoder layer.
 
-    def _drop_path1(self, x):
-        return self.drop_path1(x) if hasattr(self, "drop_path1") else self.drop_path(x)
-
-    def _drop_path2(self, x):
-        return self.drop_path2(x) if hasattr(self, "drop_path2") else self.drop_path(x)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Note: this is copied from timm.models.vision_transformer.Block with modifications.
-        attn_size = self._tome_info["size"] if self._tome_info["prop_attn"] else None
-        x_attn, metric = self.attn(self.norm1(x), attn_size)
-        x = x + self._drop_path1(x_attn)
-
+        Args:
+            hidden_states: the sequence to the encoder layer (required).
+            residual: hidden_states = Mixer(LN(residual))
+        """
+        fused_add_norm_fn = rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
+        if residual is None:
+            hidden_states, residual = fused_add_norm_fn(
+                hidden_states,
+                self.norm.weight,
+                self.norm.bias,
+                residual=residual,
+                prenorm=True,
+                residual_in_fp32=self.residual_in_fp32,
+                eps=self.norm.eps,
+            )
+        else:
+            hidden_states, residual = fused_add_norm_fn(
+                self.drop_path(hidden_states),
+                self.norm.weight,
+                self.norm.bias,
+                residual=residual,
+                prenorm=True,
+                residual_in_fp32=self.residual_in_fp32,
+                eps=self.norm.eps,
+            )    
+        x, metric = self.mixer(hidden_states, inference_params=inference_params)
         r = self._tome_info["r"].pop(0)
         if r > 0:
             # Apply ToMe here
@@ -51,53 +112,90 @@ class ToMeBlock(Block):
                     merge, x, self._tome_info["source"]
                 )
             x, self._tome_info["size"] = merge_wavg(merge, x, self._tome_info["size"])
+        
+        hidden_states = F.linear(x, self.out_proj.weight, self.out_proj.bias)
+        return hidden_states, residual
 
-        x = x + self._drop_path2(self.mlp(self.norm2(x)))
-        return x
 
-
-class ToMeAttention(Attention):
+class ToMeMamba(Mamba):
     """
     Modifications:
-     - Apply proportional attention
-     - Return the mean of k over heads from attention
+     - Apply ToMe between the attention and mlp blocks
+     - Compute and propogate token size and potentially the token sources.
     """
+    def forward(self, hidden_states, inference_params=None):
+        """
+        hidden_states: (B, L, D)
+        Returns: same shape as hidden_states
+        """
+        batch, seqlen, dim = hidden_states.shape
 
-    def forward(
-        self, x: torch.Tensor, size: torch.Tensor = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Note: this is copied from timm.models.vision_transformer.Attention with modifications.
-        B, N, C = x.shape
-        qkv = (
-            self.qkv(x)
-            .reshape(B, N, 3, self.num_heads, C // self.num_heads)
-            .permute(2, 0, 3, 1, 4)
+        conv_state, ssm_state = None, None
+        if inference_params is not None:
+            conv_state, ssm_state = self._get_states_from_cache(inference_params, batch)
+            if inference_params.seqlen_offset > 0:
+                # The states are updated inplace
+                out, _, _ = self.step(hidden_states, conv_state, ssm_state)
+                return out
+
+        # We do matmul and transpose BLH -> HBL at the same time
+        xz = rearrange(
+            self.in_proj.weight @ rearrange(hidden_states, "b l d -> d (b l)"),
+            "d (b l) -> b d l",
+            l=seqlen,
         )
-        q, k, v = (
-            qkv[0],
-            qkv[1],
-            qkv[2],
-        )  # make torchscript happy (cannot use tensor as tuple)
+        if self.in_proj.bias is not None:
+            xz = xz + rearrange(self.in_proj.bias.to(dtype=xz.dtype), "d -> d 1")
 
-        attn = (q @ k.transpose(-2, -1)) * self.scale
+        A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
+        # In the backward pass we write dx and dz next to each other to avoid torch.cat
+        if self.use_fast_path and inference_params is None:  # Doesn't support outputting the states
+            A_b = -torch.exp(self.A_b_log.float())
+            out = mamba_inner_fn_no_out_proj(
+                xz,
+                self.conv1d.weight,
+                self.conv1d.bias,
+                self.x_proj.weight,
+                self.dt_proj.weight,
+                A,
+                None,  # input-dependent B
+                None,  # input-dependent C
+                self.D.float(),
+                delta_bias=self.dt_proj.bias.float(),
+                delta_softplus=True,
+            )
+            out_b = mamba_inner_fn_no_out_proj(
+                xz.flip([-1]),
+                self.conv1d_b.weight,
+                self.conv1d_b.bias,
+                self.x_proj_b.weight,
+                self.dt_proj_b.weight,
+                A_b,
+                None,
+                None,
+                self.D_b.float(),
+                delta_bias=self.dt_proj_b.bias.float(),
+                delta_softplus=True,
+            )
+            # F.linear(rearrange(out_z, "b d l -> b l d"), out_proj_weight, out_proj_bias)
+            # if not self.if_devide_out:
+            #     out = F.linear(rearrange(out + out_b.flip([-1]), "b d l -> b l d"), self.out_proj.weight, self.out_proj.bias)
+            # else:
+            #     out = F.linear(rearrange(out + out_b.flip([-1]), "b d l -> b l d") / 2, self.out_proj.weight, self.out_proj.bias)
+            out_mixed = rearrange(out + out_b.flip([-1]), "b d l -> b l d")
+            metric = out + out_b.flip([-1])
+            
+        else:
+            assert False
+        if self.init_layer_scale is not None:
+                out = out * self.gamma    
+        # return out
+        return out_mixed, metric
 
-        # Apply proportional attention
-        if size is not None:
-            attn = attn + size.log()[:, None, None, :, 0]
-
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-
-        # Return k as well here
-        return x, k.mean(1)
 
 
 def make_tome_class(transformer_class):
-    class ToMeVisionTransformer(transformer_class):
+    class ToMeVisionMamba(transformer_class):
         """
         Modifications:
         - Initialize r, token size, and token sources.
@@ -110,11 +208,11 @@ def make_tome_class(transformer_class):
 
             return super().forward(*args, **kwdargs)
 
-    return ToMeVisionTransformer
+    return ToMeVisionMamba
 
 
 def apply_patch(
-    model: VisionTransformer, trace_source: bool = False, prop_attn: bool = True
+    model: VisionMamba, trace_source: bool = False, prop_attn: bool = True
 ):
     """
     Applies ToMe to this transformer. Afterward, set r using model.r.
@@ -125,9 +223,9 @@ def apply_patch(
     For proportional attention, set prop_attn to True. This is only necessary when evaluating models off
     the shelf. For trianing and for evaluating MAE models off the self set this to be False.
     """
-    ToMeVisionTransformer = make_tome_class(model.__class__)
+    ToMeVisionMamba = make_tome_class(model.__class__)
 
-    model.__class__ = ToMeVisionTransformer
+    model.__class__ = ToMeVisionMamba
     model.r = 0
     model._tome_info = {
         "r": model.r,
@@ -138,13 +236,14 @@ def apply_patch(
         "class_token": model.cls_token is not None,
         "distill_token": False,
     }
+    model.out_proj = None
 
     if hasattr(model, "dist_token") and model.dist_token is not None:
         model._tome_info["distill_token"] = True
 
     for module in model.modules():
+        if isinstance(module, Mamba):
+            model.out_proj = module.out_proj
+    for module in model.modules():
         if isinstance(module, Block):
-            module.__class__ = ToMeBlock
-            module._tome_info = model._tome_info
-        elif isinstance(module, Attention):
-            module.__class__ = ToMeAttention
+            module.out_proj = model.out_proj

@@ -78,6 +78,18 @@ def bipartite_soft_matching(
             return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
         else:
             return torch.cat([unm, dst], dim=1)
+    def merge_residual(x: torch.Tensor, mode="mean") -> torch.Tensor:
+        src, dst = x[..., ::2, :], x[..., 1::2, :]
+        n, t1, c = src.shape
+        unm = src.gather(dim=-2, index=unm_idx.expand(n, t1 - r, c))
+        src = src.gather(dim=-2, index=src_idx.expand(n, r, c))
+        dst = dst.scatter_reduce(-2, dst_idx.expand(n, r, c), src, reduce=mode)
+
+        if distill_token:
+            return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
+        else:
+            return torch.cat([unm, dst], dim=1)
+        
 
     def unmerge(x: torch.Tensor) -> torch.Tensor:
         unm_len = unm_idx.shape[1]
