@@ -25,7 +25,7 @@ import torch
 
 from mamba_ssm.modules.mamba_simple import Mamba
 import sys
-from vim import models_mamba, mamba_simple
+from vim import models_mamba
 
 import math
 from typing import Optional
@@ -61,7 +61,7 @@ from tome.merge import bipartite_soft_matching, merge_source, merge_wavg
 from tome.utils import parse_r
 
 
-class ToMeBlock(Block):
+class ToMeBlock(models_mamba.Block):
     """
     Modifications:
      - Apply ToMe between the attention and mlp blocks
@@ -98,6 +98,9 @@ class ToMeBlock(Block):
                 eps=self.norm.eps,
             )    
         x, metric = self.mixer(hidden_states, inference_params=inference_params)
+
+        
+
         r = self._tome_info["r"].pop(0)
         if r > 0:
             # Apply ToMe here
@@ -112,7 +115,8 @@ class ToMeBlock(Block):
                     merge, x, self._tome_info["source"]
                 )
             x, self._tome_info["size"] = merge_wavg(merge, x, self._tome_info["size"])
-        
+            residual, self._tome_info["size_residual"] = merge_wavg(merge, x, self._tome_info["size_residual"])
+
         hidden_states = F.linear(x, self.out_proj.weight, self.out_proj.bias)
         return hidden_states, residual
 
@@ -123,6 +127,7 @@ class ToMeMamba(Mamba):
      - Apply ToMe between the attention and mlp blocks
      - Compute and propogate token size and potentially the token sources.
     """
+
     def forward(self, hidden_states, inference_params=None):
         """
         hidden_states: (B, L, D)
@@ -204,6 +209,7 @@ def make_tome_class(transformer_class):
         def forward(self, *args, **kwdargs) -> torch.Tensor:
             self._tome_info["r"] = parse_r(len(self.blocks), self.r)
             self._tome_info["size"] = None
+            self._tome_info["size_residual"] = None
             self._tome_info["source"] = None
 
             return super().forward(*args, **kwdargs)
@@ -212,7 +218,7 @@ def make_tome_class(transformer_class):
 
 
 def apply_patch(
-    model: VisionMamba, trace_source: bool = False, prop_attn: bool = True
+    model: models_mamba.VisionMamba, trace_source: bool = False, prop_attn: bool = True
 ):
     """
     Applies ToMe to this transformer. Afterward, set r using model.r.
@@ -230,20 +236,23 @@ def apply_patch(
     model._tome_info = {
         "r": model.r,
         "size": None,
+        "size_residual": None,
         "source": None,
         "trace_source": trace_source,
         "prop_attn": prop_attn,
         "class_token": model.cls_token is not None,
         "distill_token": False,
     }
-    model.out_proj = None
 
     if hasattr(model, "dist_token") and model.dist_token is not None:
         model._tome_info["distill_token"] = True
 
     for module in model.modules():
         if isinstance(module, Mamba):
-            model.out_proj = module.out_proj
+            module.__class__ = ToMeMamba
+            out_proj = module.out_proj
     for module in model.modules():
-        if isinstance(module, Block):
-            module.out_proj = model.out_proj
+        if isinstance(module, models_mamba.Block):
+            module.__class__ = ToMeBlock
+            module.out_proj = out_proj
+    
