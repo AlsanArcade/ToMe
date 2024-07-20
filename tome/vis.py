@@ -258,7 +258,6 @@ def make_visualization_mamba_only_merged_tokens(
     if class_token:
         print(f"Source shape before class token removal: {source.shape}")
         source = source[:, :, 1:]
-        print(f"Source shape after class token removal: {source.shape}")
 
     print(f"Source shape after class token removal: {source.shape}")
 
@@ -278,28 +277,28 @@ def make_visualization_mamba_only_merged_tokens(
     print(f"source_without_single_token_adjacency: {source_without_single_token_adjacency.shape}")
 
     vis = source_without_single_token_adjacency.argmax(dim=1)
-    print(f"vis: {vis.shape}")
     vis_original_for_first_group = source.argmax(dim=1)
     print(f"vis_original_for_first_group: {vis_original_for_first_group.shape}")
- #add extra dim, then "create" adjency to this new "orig_token", then ignore this "group" later in the loop
     print(f"Vis : {vis}")
-    print(f"Vis shape: {vis.shape}")
-    groups = set(vis[0])
+    print(f"Vis[0] : {vis[0]}")
+    groups = list(set(vis[0].tolist()))
+    groups.sort()
     print(f"Number of groups as per groups size: {len(groups)}")
+    print(f"groups {groups}")
     num_groups = len(groups)
     print(f"Number of merged tokens: {num_merged_tokens}")
 
     cmap = generate_colormap(num_groups)
     vis_img = np.zeros((h, w, 3))
 
-    for i in range(num_groups):
-        if i == 0 & first_token_got_merged:
+    for i in range(len(groups)):
+        print(f"\n\ntoken number {i}:{groups[i]}")
+        if groups[i] == 0 & first_token_got_merged:
             mask = (vis_original_for_first_group == i).float()
         else:
-            mask = (vis == i).float()
+            mask = (vis == groups[i]).float()
         # mask = (vis == i-1).float()
-        print(f"Mask shape before view: {mask.shape}")
-        print(f"Mask sum: {mask.sum()}")
+        print(f"Mask shape before view: {mask.shape} Mask sum: {mask.sum()}")
         if mask.sum()<=0:
             print(f"Mask sum ZERO")
         mask = mask.view(1, 1, ph, pw)
