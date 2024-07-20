@@ -301,7 +301,7 @@ def make_visualization_mamba_only_merged_tokens(
         print(f"Mask shape before view: {mask.shape}")
         print(f"Mask sum: {mask.sum()}")
         if mask.sum()<=0:
-            print(f"Mask sum ZERO)
+            print(f"Mask sum ZERO")
         mask = mask.view(1, 1, ph, pw)
         # print(f"Mask shape after view: {mask.shape}")
         mask = F.interpolate(mask, size=(h, w), mode="nearest")
