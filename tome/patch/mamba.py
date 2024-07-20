@@ -97,8 +97,10 @@ class ToMeBlock(models_mamba.Block):
                 residual_in_fp32=self.residual_in_fp32,
                 eps=self.norm.eps,
             )    
+        x_0 = hidden_states.shape
+        y_0 = residual.shape
         x, metric = self.mixer(hidden_states, inference_params=inference_params)
-
+        x_01 = x.shape
         
 
         r = self._tome_info["r"].pop(0)
@@ -115,9 +117,14 @@ class ToMeBlock(models_mamba.Block):
                     merge, x, self._tome_info["source"]
                 )
             x, self._tome_info["size"] = merge_wavg(merge, x, self._tome_info["size"])
-            residual, self._tome_info["size_residual"] = merge_wavg(merge, x, self._tome_info["size_residual"])
+            x_02 = x.shape
+            residual, self._tome_info["size_residual"] = merge_wavg(merge, residual, self._tome_info["size_residual"]) 
+            # residual = merge(residual) -> macht gerade kein unterschied -> iwo muss ein Fehler sein
 
-        hidden_states = F.linear(x, self.out_proj.weight, self.out_proj.bias)
+        hidden_states = F.linear(x, self.out_proj_weight, self.out_proj_bias)
+        x_1 = hidden_states.shape
+        y_1 = residual.shape
+        # print(self._tome_info["source"])
         return hidden_states, residual
 
 
@@ -134,6 +141,7 @@ class ToMeMamba(Mamba):
         Returns: same shape as hidden_states
         """
         batch, seqlen, dim = hidden_states.shape
+        x_001 = hidden_states.shape
 
         conv_state, ssm_state = None, None
         if inference_params is not None:
@@ -144,13 +152,16 @@ class ToMeMamba(Mamba):
                 return out
 
         # We do matmul and transpose BLH -> HBL at the same time
+        # x and z ! in one ll, then split later: x, z = xz.chunk(2, dim=1)
         xz = rearrange(
             self.in_proj.weight @ rearrange(hidden_states, "b l d -> d (b l)"),
             "d (b l) -> b d l",
             l=seqlen,
         )
+        x_002 = xz.shape
         if self.in_proj.bias is not None:
             xz = xz + rearrange(self.in_proj.bias.to(dtype=xz.dtype), "d -> d 1")
+        x_003 = xz.shape
 
         A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
         # In the backward pass we write dx and dz next to each other to avoid torch.cat
@@ -182,13 +193,12 @@ class ToMeMamba(Mamba):
                 delta_bias=self.dt_proj_b.bias.float(),
                 delta_softplus=True,
             )
-            # F.linear(rearrange(out_z, "b d l -> b l d"), out_proj_weight, out_proj_bias)
-            # if not self.if_devide_out:
-            #     out = F.linear(rearrange(out + out_b.flip([-1]), "b d l -> b l d"), self.out_proj.weight, self.out_proj.bias)
-            # else:
-            #     out = F.linear(rearrange(out + out_b.flip([-1]), "b d l -> b l d") / 2, self.out_proj.weight, self.out_proj.bias)
-            out_mixed = rearrange(out + out_b.flip([-1]), "b d l -> b l d")
-            metric = out + out_b.flip([-1])
+            out_mixed = rearrange(out + out_b.flip([-1]), "b d l -> b l d") / 2
+            z = out.shape
+            z1 = out_b.shape
+            z3 = out_mixed.shape
+
+            metric = out_mixed # oder einfach (out + out_b.flip([-1]) ?
             
         else:
             assert False
@@ -207,7 +217,7 @@ def make_tome_class(transformer_class):
         """
 
         def forward(self, *args, **kwdargs) -> torch.Tensor:
-            self._tome_info["r"] = parse_r(len(self.blocks), self.r)
+            self._tome_info["r"] = parse_r(len(self.layers), self.r) 
             self._tome_info["size"] = None
             self._tome_info["size_residual"] = None
             self._tome_info["source"] = None
@@ -218,7 +228,7 @@ def make_tome_class(transformer_class):
 
 
 def apply_patch(
-    model: models_mamba.VisionMamba, trace_source: bool = False, prop_attn: bool = True
+    model: models_mamba.VisionMamba, trace_source: bool = True, prop_attn: bool = True
 ):
     """
     Applies ToMe to this transformer. Afterward, set r using model.r.
@@ -232,7 +242,7 @@ def apply_patch(
     ToMeVisionMamba = make_tome_class(model.__class__)
 
     model.__class__ = ToMeVisionMamba
-    model.r = 0
+    model.r = 1#(1, -1.0) # 0
     model._tome_info = {
         "r": model.r,
         "size": None,
@@ -247,12 +257,20 @@ def apply_patch(
     if hasattr(model, "dist_token") and model.dist_token is not None:
         model._tome_info["distill_token"] = True
 
+    out_proj_weights = []
+    out_proj_biases = []
     for module in model.modules():
         if isinstance(module, Mamba):
             module.__class__ = ToMeMamba
-            out_proj = module.out_proj
+            out_proj_weights.append(module.out_proj.weight)
+            out_proj_biases.append(module.out_proj.bias)
+    i = 0
     for module in model.modules():
         if isinstance(module, models_mamba.Block):
             module.__class__ = ToMeBlock
-            module.out_proj = out_proj
+            module._tome_info = model._tome_info
+            module.out_proj_weight = out_proj_weights[i]
+            module.out_proj_bias = out_proj_biases[i]
+            i += 1
+    x = "I'm a breakpoint, yeah!"
     

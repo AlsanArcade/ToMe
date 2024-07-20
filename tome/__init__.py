@@ -6,6 +6,6 @@
 # --------------------------------------------------------
 
 from . import merge, patch, utils
-from .vis import make_visualization
+from .vis import make_visualization, make_visualization_mamba, make_visualization_mamba_only_merged_tokens
 
-__all__ = ["utils", "merge", "patch", "make_visualization"]
+__all__ = ["utils", "merge", "patch", "make_visualization", "make_visualization_mamba", "make_visualization_mamba_only_merged_tokens"]

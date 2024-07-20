@@ -48,20 +48,21 @@ def bipartite_soft_matching(
 
     with torch.no_grad():
         metric = metric / metric.norm(dim=-1, keepdim=True)
-        a, b = metric[..., ::2, :], metric[..., 1::2, :]
-        scores = a @ b.transpose(-1, -2)
-
+        # wenn token als metric: dims: batch, tokens, emb_dim
+        a, b = metric[..., ::2, :], metric[..., 1::2, :] # vergleiche gerade und ungerade tokens (tokens dim=1)
+        scores = a @ b.transpose(-1, -2) #ähnlichkeit berechnen (scalar)
+        # wenn token als metric: dims: batch, tokens/2, tokens/2
         if class_token:
-            scores[..., 0, :] = -math.inf
+            scores[..., 0, :] = -math.inf #token an stelle null: -inf ähnlich zu allen anderen token
         if distill_token:
-            scores[..., :, 0] = -math.inf
+            scores[..., :, 0] = -math.inf #alle tokens: class token hat ähnlichkeit -inf für jeden token
 
-        node_max, node_idx = scores.max(dim=-1)
-        edge_idx = node_max.argsort(dim=-1, descending=True)[..., None]
+        node_max, node_idx = scores.max(dim=-1) # ?für alle token: ~ welcher token am ähnlichsten?
+        edge_idx = node_max.argsort(dim=-1, descending=True)[..., None] # ?welche sind die token mit einer super ähnlichkeit zu anderen?
 
-        unm_idx = edge_idx[..., r:, :]  # Unmerged Tokens
-        src_idx = edge_idx[..., :r, :]  # Merged Tokens
-        dst_idx = node_idx[..., None].gather(dim=-2, index=src_idx)
+        unm_idx = edge_idx[..., r:, :]  # Unmerged Tokens -
+        src_idx = edge_idx[..., :r, :]  # Merged Tokens # >r token mit dem ähnlichsten partner ?wie duplikat zieltoken vermeiden -> whs gar nicht gewollt
+        dst_idx = node_idx[..., None].gather(dim=-2, index=src_idx) #?
 
         if class_token:
             # Sort to ensure the class token is at the start
@@ -243,9 +244,12 @@ def merge_source(
     For source tracking. Source is an adjacency matrix between the initial tokens and final merged groups.
     x is used to find out how many tokens there are in case the source is None.
     """
+    print(f"x size: {x.shape}")
     if source is None:
         n, t, _ = x.shape
         source = torch.eye(t, device=x.device)[None, ...].expand(n, t, t)
-
+        print(f"Init source size: {source.shape}")
     source = merge(source, mode="amax")
+    print(f"New source size: {source.shape}")
+
     return source
