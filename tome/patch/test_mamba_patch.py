@@ -100,41 +100,21 @@ class ToMeBlock(models_mamba.Block):
         x_0 = hidden_states.shape
         y_0 = residual.shape
         # rearrange here !!!
-        # print("hidden",hidden_states.shape)
-        x, metric = self.mixer(hidden_states, inference_params=inference_params)
-        # print("hidden post mamba",x.shape)
+        hidden_states, metric = self.mixer(hidden_states, inference_params=inference_params)
+        # rearrange back here
         
         
 
         r = self._tome_info["r"].pop(0)
+        print(f"hidden size before token red {hidden_states.shape}")
         if r > 0:
-            # Apply ToMe here
-            merge, unmerge, self._tome_info["cls_token_position"] = bipartite_soft_matching(
-                metric,
-                r,
-                self._tome_info["class_token"],
-                self._tome_info["distill_token"],
-                self._tome_info["cls_token_position"],
-            )
-            if self._tome_info["trace_source"]:
-                self._tome_info["source"] = merge_source(
-                    merge, x, self._tome_info["source"]
-                )
-            hidden_orig = x
-            # x, self._tome_info["size"] = merge_wavg(merge, x, self._tome_info["size"])
-            x, self._tome_info["cls_token_position"] = merge(x)
-            # print(f"delta sum hidden: {hidden_orig.sum()-x.sum()} , shapes: {hidden_orig.shape}{x.shape}") #{unmerge(x).shape}")
-            self.compare_tensors(hidden_orig,x)
-            # self.compare_tensors(hidden_orig,(x))
-            residual_orig = residual
-            residual, _ = merge(residual)
-            # residual, self._tome_info["size_residual"] = merge(residual, self._tome_info["size_residual"]) 
-            # print(f"delta sum residual: {residual_orig.sum()-residual.sum()}, shapes: {residual_orig.shape}{unmerge(residual).shape}")
-            # residual = merge(residual) -> macht gerade kein unterschied -> iwo muss ein Fehler sein
-
-        hidden_states = F.linear(x, self.out_proj_weight, self.out_proj_bias)
-        # x_1 = hidden_states.shape
-        # y_1 = residual.shape
+            hidden_states = hidden_states[:, :-1, :]
+            residual = residual[:, :-1, :]
+        print(f"hidden size after token red {hidden_states.shape}")
+        
+        hidden_states = F.linear(hidden_states, self.out_proj_weight, self.out_proj_bias)
+        x_1 = hidden_states.shape
+        y_1 = residual.shape
         # print(self._tome_info["source"])
         return hidden_states, residual
     # def reorderForMambaBlock(hidden_states, source):
@@ -145,19 +125,6 @@ class ToMeBlock(models_mamba.Block):
     #     return
     # def orderBackToOriginal(hidden_states, source):
     #     return
-    def compare_tensors(self,t1,t2):
-        t1_slice = t1[0, :10, :5]
-        t2_slice = t2[0, :10, :5]
-        # print(t1_slice)
-        # print(t2_slice)
-        # Calculating the Euclidean distance for each of the first 30 tokens
-        distances = t1_slice - t2_slice
-        
-        # Convert distances to a list (optional)
-        distances_list = distances.tolist()
-        
-        # Output the distances
-        # print(distances_list)
 
 
 class ToMeMamba(Mamba):
@@ -251,65 +218,15 @@ def make_tome_class(transformer_class):
         Modifications:
         - Initialize r, token size, and token sources.
         """
-        def forward_features(self, x, inference_params=None, if_random_cls_token_position=False, if_random_token_rank=False):
-            # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
-            # with slight modifications to add the dist_token
-            # print(f"x size before embed: {x.shape}")
-            x = self.patch_embed(x)
-            # print(f"x size after embed: {x.shape}")
-            B, M, _ = x.shape
-            cls_token = self.cls_token.expand(B, -1, -1)
-            self._tome_info["cls_token_position"] = M // 2 # always in a in bipartitet softmatching
-            
-            # print("token pos", self._tome_info["cls_token_position"])
-            # add cls token in the middle
-            x = torch.cat((x[:, :self._tome_info["cls_token_position"], :], cls_token, x[:, self._tome_info["cls_token_position"]:, :]), dim=1) #bis csl_pos-1, cls token, cls_position->ende
-            # print(f"x size after cls token added : {x.shape}")
-            x = x + self.pos_embed
-            # print(f"x size after pos embedd : {x.shape}")
-    
-            x = self.pos_drop(x)
-            # print(f"x size after pos_drop : {x.shape}")
-    
-    
-            # mamba impl
-            residual = None
-            hidden_states = x
-            for layer in self.layers:
-    
-                hidden_states, residual = layer(
-                    hidden_states, residual, inference_params=inference_params
-                )
-            debug = hidden_states.sum()
-            # Set prenorm=False here since we don't need the residual
-            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm_f, RMSNorm) else layer_norm_fn
-            hidden_states = fused_add_norm_fn(
-                self.drop_path(hidden_states),
-                self.norm_f.weight,
-                self.norm_f.bias,
-                eps=self.norm_f.eps,
-                residual=residual,
-                prenorm=False,
-                residual_in_fp32=self.residual_in_fp32,
-            )
-    
-            # return only cls token if it exists
-            return hidden_states[:, self._tome_info["cls_token_position"], :]
-    
-        def forward(self, x, return_features=False, inference_params=None, if_random_cls_token_position=False, if_random_token_rank=False):
+
+        def forward(self, *args, **kwdargs) -> torch.Tensor:
             self._tome_info["r"] = parse_r(len(self.layers), self.r) 
             self._tome_info["size"] = None
             self._tome_info["size_residual"] = None
             self._tome_info["source"] = None
-            
-            x = self.forward_features(x, inference_params, if_random_cls_token_position=if_random_cls_token_position, if_random_token_rank=if_random_token_rank)
-            if return_features:
-                return x
-            x = self.head(x)
-            if self.final_pool_type == 'max':
-                raise ValueError("should always be: final_pool_type=mean")
-            return x
-            
+
+            return super().forward(*args, **kwdargs)
+
     return ToMeVisionMamba
 
 
@@ -326,9 +243,9 @@ def apply_patch(
     the shelf. For trianing and for evaluating MAE models off the self set this to be False.
     """
     ToMeVisionMamba = make_tome_class(model.__class__)
-
+    
     model.__class__ = ToMeVisionMamba
-    model.r = 25#(1, -1.0) # 0
+    model.r = 1#(1, -1.0) # 0
     model._tome_info = {
         "r": model.r,
         "size": None,
@@ -350,6 +267,7 @@ def apply_patch(
             module.__class__ = ToMeMamba
             out_proj_weights.append(module.out_proj.weight)
             out_proj_biases.append(module.out_proj.bias)
+    print(f"len out proj list{len(out_proj_weights)}")
     i = 0
     for module in model.modules():
         if isinstance(module, models_mamba.Block):
@@ -358,6 +276,8 @@ def apply_patch(
             module.out_proj_weight = out_proj_weights[i]
             module.out_proj_bias = out_proj_biases[i]
             i += 1
+    print(f"i value, should be same{i}")
+    
     x = "I'm a breakpoint, yeah!"
 
 # def reorderMergedTokensToKeepFlattenedOrder():
