@@ -57,7 +57,7 @@ try:
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
-from tome.merge import bipartite_soft_matching, merge_source, merge_wavg
+from tome.merge import bipartite_soft_matching, merge_source, merge_wavg, get_current_cls_token_pos_from_source
 from tome.utils import parse_r
 
 
@@ -99,52 +99,67 @@ class ToMeBlock(models_mamba.Block):
             )    
         x_0 = hidden_states.shape
         y_0 = residual.shape
-        # rearrange here !!!
-        # print("hidden",hidden_states.shape)
-        x, metric = self.mixer(hidden_states, inference_params=inference_params)
+        # LATER: MIGHT NEED TO REARRANGE HERE; THOUGH WE MIGHT NEED TO REARRANGE BACK AFTER THIS LAYER TO KEEP THE RESIDUALS 
+        #I'll just rearrange here, as this is possible here and less hassle
+        # REORDER FOR MAMBA
+        print(f"hidden_states {hidden_states.shape}")
+        hidden_states_expanded, token_is_sole_representative_of_group_map = get_expanded_tokens_and_mask(hidden_states, self._tome_info["source"])
+        hidden_states_reordered = hidden_states_expanded[:,token_is_sole_representative_of_group_map,:]
+        print(f"hidden_states_reordered {hidden_states_reordered.shape}")
+        # MAMBA
+        x, metric = self.mixer(hidden_states_reordered, inference_params=inference_params)
+
+        #RECREATE INITIAL ORDER
+        
         # print("hidden post mamba",x.shape)
+        # Mapback test generalization
+        num_orig_tokens = source.shape[1]
+        orig_tokens_pre_flat = torch.arange(num_orig_tokens)
+        x = transform_post_flattened_tokens_to_position_pre_flatten( x, orig_tokens_pre_flat, source.argmax(1))
+        metric = x
+        #CONTINUE
+        
+        
+        #Optimized mapback for vim
+        # orig_index_of tokens = torch.arange(num_orig_tokens)[token_is_sole_representative_of_group_map]
+
+        
+        
         
         
 
         r = self._tome_info["r"].pop(0)
         if r > 0:
             # Apply ToMe here
-            merge, unmerge, self._tome_info["cls_token_position"] = bipartite_soft_matching(
+            merge, unmerge = bipartite_soft_matching(
                 metric,
                 r,
-                self._tome_info["class_token"],
-                self._tome_info["distill_token"],
-                self._tome_info["cls_token_position"],
+                self._tome_info["source"],
+                self._tome_info["original_csl_token_pos"],
             )
-            if self._tome_info["trace_source"]:
-                self._tome_info["source"] = merge_source(
-                    merge, x, self._tome_info["source"]
-                )
+            self._tome_info["source"] = merge_source(
+                merge, x, self._tome_info["source"]
+            )
+            
             hidden_orig = x
             # x, self._tome_info["size"] = merge_wavg(merge, x, self._tome_info["size"])
-            x, self._tome_info["cls_token_position"] = merge(x)
+            x = merge(x)
             # print(f"delta sum hidden: {hidden_orig.sum()-x.sum()} , shapes: {hidden_orig.shape}{x.shape}") #{unmerge(x).shape}")
-            self.compare_tensors(hidden_orig,x)
+            # self.compare_tensors(hidden_orig,x)
             # self.compare_tensors(hidden_orig,(x))
             residual_orig = residual
-            residual, _ = merge(residual)
+            residual = merge(residual)
             # residual, self._tome_info["size_residual"] = merge(residual, self._tome_info["size_residual"]) 
             # print(f"delta sum residual: {residual_orig.sum()-residual.sum()}, shapes: {residual_orig.shape}{unmerge(residual).shape}")
             # residual = merge(residual) -> macht gerade kein unterschied -> iwo muss ein Fehler sein
+            
 
         hidden_states = F.linear(x, self.out_proj_weight, self.out_proj_bias)
         # x_1 = hidden_states.shape
         # y_1 = residual.shape
         # print(self._tome_info["source"])
         return hidden_states, residual
-    # def reorderForMambaBlock(hidden_states, source):
-    #     #create full dimensional hidden states from current hidden states, source
-    #     #create mask from source (see visualization ipynb?)
-    #     # flatten full dim hidden, mask (myb make list of tensors -one dim ->list), map 
-    #     # delete all duplicate tensors via mask, shorten tensor (?)
-    #     return
-    # def orderBackToOriginal(hidden_states, source):
-    #     return
+        
     def compare_tensors(self,t1,t2):
         t1_slice = t1[0, :10, :5]
         t2_slice = t2[0, :10, :5]
@@ -251,7 +266,7 @@ def make_tome_class(transformer_class):
         Modifications:
         - Initialize r, token size, and token sources.
         """
-        def forward_features(self, x, inference_params=None, if_random_cls_token_position=False, if_random_token_rank=False):
+        def forward_features(self, x, inference_params=None, if_random_original_csl_token_pos=False, if_random_token_rank=False):
             # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
             # with slight modifications to add the dist_token
             # print(f"x size before embed: {x.shape}")
@@ -259,11 +274,11 @@ def make_tome_class(transformer_class):
             # print(f"x size after embed: {x.shape}")
             B, M, _ = x.shape
             cls_token = self.cls_token.expand(B, -1, -1)
-            self._tome_info["cls_token_position"] = M // 2 # always in a in bipartitet softmatching
+            self._tome_info["original_csl_token_pos"] = M // 2 # always in a in bipartitet softmatching
             
-            # print("token pos", self._tome_info["cls_token_position"])
+            # print("token pos", self._tome_info["original_csl_token_pos"])
             # add cls token in the middle
-            x = torch.cat((x[:, :self._tome_info["cls_token_position"], :], cls_token, x[:, self._tome_info["cls_token_position"]:, :]), dim=1) #bis csl_pos-1, cls token, cls_position->ende
+            x = torch.cat((x[:, :self._tome_info["original_csl_token_pos"], :], cls_token, x[:, self._tome_info["original_csl_token_pos"]:, :]), dim=1) #bis csl_pos-1, cls token, cls_position->ende
             # print(f"x size after cls token added : {x.shape}")
             x = x + self.pos_embed
             # print(f"x size after pos embedd : {x.shape}")
@@ -294,15 +309,17 @@ def make_tome_class(transformer_class):
             )
     
             # return only cls token if it exists
-            return hidden_states[:, self._tome_info["cls_token_position"], :]
+            assert False, "Need to adjust code here to get current cls pos"
+            current_cls_pos = get_current_cls_token_pos_from_source(self._tome_info["original_csl_token_pos"], self._tome_info["source"])
+            return hidden_states[:, current_cls_pos, :]
     
-        def forward(self, x, return_features=False, inference_params=None, if_random_cls_token_position=False, if_random_token_rank=False):
+        def forward(self, x, return_features=False, inference_params=None, if_random_original_csl_token_pos=False, if_random_token_rank=False):
             self._tome_info["r"] = parse_r(len(self.layers), self.r) 
             self._tome_info["size"] = None
             self._tome_info["size_residual"] = None
             self._tome_info["source"] = None
             
-            x = self.forward_features(x, inference_params, if_random_cls_token_position=if_random_cls_token_position, if_random_token_rank=if_random_token_rank)
+            x = self.forward_features(x, inference_params, if_random_original_csl_token_pos=if_random_original_csl_token_pos, if_random_token_rank=if_random_token_rank)
             if return_features:
                 return x
             x = self.head(x)
@@ -348,6 +365,7 @@ def apply_patch(
     for module in model.modules():
         if isinstance(module, Mamba):
             module.__class__ = ToMeMamba
+            module._tome_info = model._tome_info
             out_proj_weights.append(module.out_proj.weight)
             out_proj_biases.append(module.out_proj.bias)
     i = 0
