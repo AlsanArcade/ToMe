@@ -57,7 +57,7 @@ try:
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
-from tome.merge import bipartite_soft_matching, merge_source, merge_wavg, get_current_cls_token_pos_from_source
+from tome.merge import bipartite_soft_matching, merge_source, merge_wavg, get_current_cls_token_pos_from_source, get_expanded_tokens_and_mask
 from tome.utils import parse_r
 
 
@@ -99,25 +99,31 @@ class ToMeBlock(models_mamba.Block):
             )    
         x_0 = hidden_states.shape
         y_0 = residual.shape
-        # LATER: MIGHT NEED TO REARRANGE HERE; THOUGH WE MIGHT NEED TO REARRANGE BACK AFTER THIS LAYER TO KEEP THE RESIDUALS 
-        #I'll just rearrange here, as this is possible here and less hassle
-        # REORDER FOR MAMBA
-        print(f"hidden_states {hidden_states.shape}")
-        hidden_states_expanded, token_is_sole_representative_of_group_map = get_expanded_tokens_and_mask(hidden_states, self._tome_info["source"])
-        hidden_states_reordered = hidden_states_expanded[:,token_is_sole_representative_of_group_map,:]
-        print(f"hidden_states_reordered {hidden_states_reordered.shape}")
-        # MAMBA
-        x, metric = self.mixer(hidden_states_reordered, inference_params=inference_params)
-
-        #RECREATE INITIAL ORDER
         
-        # print("hidden post mamba",x.shape)
-        # Mapback test generalization
-        num_orig_tokens = source.shape[1]
-        orig_tokens_pre_flat = torch.arange(num_orig_tokens)
-        x = transform_post_flattened_tokens_to_position_pre_flatten( x, orig_tokens_pre_flat, source.argmax(1))
-        metric = x
-        #CONTINUE
+
+        if(self._tome_info["source"]!=None):
+            print("source route entered")
+            # LATER: MIGHT NEED TO REARRANGE HERE; THOUGH WE MIGHT NEED TO REARRANGE BACK AFTER THIS LAYER TO KEEP THE RESIDUALS 
+            #I'll just rearrange here, as this is possible here and less hassle
+            # REORDER FOR MAMBA
+            print(f"hidden_states {hidden_states.shape}")
+            hidden_states_expanded, token_is_sole_representative_of_group_map = get_expanded_tokens_and_mask(hidden_states, self._tome_info["source"])
+            hidden_states_reordered = hidden_states_expanded[:,token_is_sole_representative_of_group_map,:]
+            print(f"hidden_states_reordered {hidden_states_reordered.shape}")
+            # MAMBA
+            x, metric = self.mixer(hidden_states_reordered, inference_params=inference_params)
+    
+            #RECREATE INITIAL ORDER
+            # print("hidden post mamba",x.shape)
+            # Mapback test generalization
+            num_orig_tokens = source.shape[1]
+            orig_tokens_pre_flat = torch.arange(num_orig_tokens)
+            x = transform_post_flattened_tokens_to_position_pre_flatten( x, orig_tokens_pre_flat, source.argmax(1))
+            metric = x
+            #CONTINUE
+        else:
+            x, metric = self.mixer(hidden_states, inference_params=inference_params)
+    
         
         
         #Optimized mapback for vim

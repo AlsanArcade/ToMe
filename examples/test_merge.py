@@ -1,39 +1,15 @@
-import math
-from typing import Optional
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch import Tensor
-
-from typing import Tuple
-
 import torch
 
-from mamba_ssm.modules.mamba_simple import Mamba
-import sys
-from vim import models_mamba
+batch_map = torch.arange(2).unsqueeze(1)
+token_maps = torch.tensor([[0,1],[1,0]])
+t_orig = torch.tensor(
+        [[[2, 1],
+         [1, 4]],
 
-import math
-from typing import Optional
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch import Tensor
-
-from einops import rearrange, repeat
-from tome.merge import bipartite_soft_matching, merge_source, merge_wavg
-
-x = torch.tensor([[[1.0, 0.0],   # Token 1
-                   [0.0, 10.0],   # Token 2
-                   [0.5, 0.5],   # Token 3
-                   [0.5, 0.7]]])
-merge, _ =  bipartite_soft_matching(
-                x,
-                1,
-                True,
-                True,
-            )
-x = merge(x)
-print(f"x new {x}")
+        [[1, 1],
+         [4, 3]]])
+print(t_orig)
+t_reference = t_orig[:,token_maps[1],:]
+print(t_reference)
+t_new = t_orig[batch_map,token_maps,:]
+print(t_new)

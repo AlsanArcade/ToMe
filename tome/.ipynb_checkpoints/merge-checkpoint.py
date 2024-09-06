@@ -15,6 +15,8 @@ def do_nothing(x, mode=None):
     return x
 
 def get_current_cls_token_pos_from_source(original_csl_token_pos,source):
+    if(source== None):
+        return original_csl_token_pos
     source_flattened = source.squeeze(0)
     new_token_map = source_flattened.argmax(0)
     new_cls_position = new_token_map[original_csl_token_pos]
@@ -41,8 +43,8 @@ def bipartite_soft_matching(
     def set_cls_token_scores_to_mininf(scores):
         cls_pos = get_current_cls_token_pos_from_source(original_csl_token_pos,source)
         cls_in_a = cls_pos%2 == 0
-        if cls_in_src:
-            scores[:,cls_pos/2,:] = -math.inf
+        if cls_in_a:
+            scores[:,cls_pos//2,:] = -math.inf
         else:
             scores[:,:,cls_pos//2] = -math.inf
         return scores
@@ -50,7 +52,7 @@ def bipartite_soft_matching(
 
     # We can only reduce by a maximum of 50% tokens
     t = metric.shape[1]
-    r = min(r, (t - protected) // 2)
+    r = min(r, (t - 1) // 2)
 
     if r <= 0:
         return do_nothing, do_nothing
@@ -82,10 +84,7 @@ def bipartite_soft_matching(
         src = src.gather(dim=-2, index=src_idx.expand(n, r, c))
         dst = dst.scatter_reduce(-2, dst_idx.expand(n, r, c), src, reduce=mode)
 
-        if distill_token:
-            return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
-        else:
-            return torch.cat([unm, dst], dim=1)
+        return torch.cat([unm, dst], dim=1)
 
     def unmerge(x: torch.Tensor) -> torch.Tensor:
         unm_len = unm_idx.shape[1]
@@ -218,7 +217,7 @@ def create_map_back(flat_map, new_tensor_map):
 
     return map_back
 
-def transform_post_flattened_tokens_to_position_pre_flatten(x,flat_map, new_tensor_map)
+def transform_post_flattened_tokens_to_position_pre_flatten(x,flat_map, new_tensor_map):
     map_back = create_map_back(flat_map, new_tensor_map)
     return x[:,map_back,:]
 

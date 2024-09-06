@@ -15,6 +15,8 @@ def do_nothing(x, mode=None):
     return x
 
 def get_current_cls_token_pos_from_source(original_csl_token_pos,source):
+    if(source== None):
+        return original_csl_token_pos
     source_flattened = source.squeeze(0)
     new_token_map = source_flattened.argmax(0)
     new_cls_position = new_token_map[original_csl_token_pos]
@@ -41,8 +43,8 @@ def bipartite_soft_matching(
     def set_cls_token_scores_to_mininf(scores):
         cls_pos = get_current_cls_token_pos_from_source(original_csl_token_pos,source)
         cls_in_a = cls_pos%2 == 0
-        if cls_in_src:
-            scores[:,cls_pos/2,:] = -math.inf
+        if cls_in_a:
+            scores[:,cls_pos//2,:] = -math.inf
         else:
             scores[:,:,cls_pos//2] = -math.inf
         return scores
@@ -50,7 +52,7 @@ def bipartite_soft_matching(
 
     # We can only reduce by a maximum of 50% tokens
     t = metric.shape[1]
-    r = min(r, (t - protected) // 2)
+    r = min(r, (t - 1) // 2)
 
     if r <= 0:
         return do_nothing, do_nothing
@@ -82,10 +84,7 @@ def bipartite_soft_matching(
         src = src.gather(dim=-2, index=src_idx.expand(n, r, c))
         dst = dst.scatter_reduce(-2, dst_idx.expand(n, r, c), src, reduce=mode)
 
-        if distill_token:
-            return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
-        else:
-            return torch.cat([unm, dst], dim=1)
+        return torch.cat([unm, dst], dim=1)
 
     def unmerge(x: torch.Tensor) -> torch.Tensor:
         unm_len = unm_idx.shape[1]
@@ -179,48 +178,49 @@ def generate_presence_mask(indices, size):
     return mask
 
 
-def get_expanded_tokens_and_mask(x: torch.Tensor,source):
+def get_expanded_tokens_and_mask(x: torch.Tensor,source):#INPROGRESS adapted include batch dim for source
     """
     takes the current, merged tokens tensor and the source to create a tensor where all the original tokens have their new merged/or unmerged value, no matter where they are now. Additionally give back a mask of orig_token_size where duplicates are False.
     Idea: AFTER creating the merge fnx, merging tokens AND SOURCE
     use the new source to compute the the original locations of the merged tokens and use the values+the mask to flatten the values&mask appropriate to the wanted pattern and then apply the mask(and reshape if needed)
     """
-    new_token,old_token = source.shape
+    new_token, old_token = source.squeeze(0).shape
     new_token_map = source.argmax(0) #Save backtranslation?
     all_original_tokens_corresponding_merged_values = gather_values_using_indices(x,new_token_map)
     #build on this, 
-    token_is_sole_representative_of_group = generate_presence_mask(new_token_map, source_flattened.shape[1])
+    token_is_sole_representative_of_group = generate_presence_mask(new_token_map, old_token)
     return all_original_tokens_corresponding_merged_values, token_is_sole_representative_of_group
 
 
 
-def create_map_back(flat_map, new_tensor_map):
+def create_map_back(flat_map, new_tensor_map): #adapted include batch dim for source
     """
-    COULD EXECUTE THIS ONCE PER PATTERN FIRST; THEN HAVE IDX TRANSFORME TENSOR WITHOUTH OVERHEAD
-    Creates the map_back tensor that maps positions in flat_map to positions in new_tensor_map.
-    flat_map: idx tensor gets flattened same way tokens do, shows indices of tokens pre flattening (when still blown up to orig_token)
-    new_tensor_map: current new_token indices(pre flatten&co)->orig_token_pos of new_token
+    Creates the map_back tensor that maps positions in flat_map to positions in new_tensor_map for each batch.
 
     Args:
-    - flat_map (torch.Tensor): A 1D tensor of size [new_token_num] with elements in the range [0, orig_token_num-1].
-    - new_tensor_to_orig_tensor_map (torch.Tensor): A 1D tensor of size [new_token_num] with elements in the range [0, orig_token_num-1].
+    - flat_map (torch.Tensor): A 2D tensor of size [batch_size, new_token_num] with elements in the range [0, orig_token_num-1].
+    - new_tensor_map (torch.Tensor): A 2D tensor of size [batch_size, new_token_num] with elements in the range [0, orig_token_num-1].
 
     Returns:
-    - torch.Tensor: A 1D tensor of size [new_token_num] where map_back[i] gives the index j such that 
-                    new_tensor_to_orig_tensor_map[j] == flat_map[i].
+    - torch.Tensor: A 2D tensor of size [batch_size, new_token_num] where map_back[i, k] gives the index j such that 
+                    new_tensor_map[i, j] == flat_map[i, k] for each batch i.
     """
-    # Use broadcasting and equality check to find where elements match
-    # This will create a boolean tensor of shape [new_token_num, new_token_num]
-    match_matrix = flat_map.unsqueeze(1) == new_tensor_map.unsqueeze(0)
-    
-    # Use argmax to get the index of the matching element in new_tensor_map
-    map_back = match_matrix.argmax(dim=1)
+    # flat_map: [batch_size, new_token_num]
+    # new_tensor_map: [batch_size, new_token_num]
+
+    # Broadcasting and matching each element in flat_map to elements in new_tensor_map for each batch
+    match_matrix = flat_map.unsqueeze(2) == new_tensor_map.unsqueeze(1)  # [batch_size, new_token_num, new_token_num]
+
+    # Using argmax to find the index where elements match along the new_token_num dimension
+    map_back = match_matrix.argmax(dim=2)  # [batch_size, new_token_num]
 
     return map_back
 
-def transform_post_flattened_tokens_to_position_pre_flatten(x,flat_map, new_tensor_map)
-    map_back = create_map_back(flat_map, new_tensor_map)
-    return x[:,map_back,:]
+def transform_post_flattened_tokens_to_position_pre_flatten(x,flat_map, new_tensor_map): #adapted include batch dim for source
+    batch_size = x.shape[0]
+    batch_indices_for_broadcast = torch.arange(batch_size).unsqueeze(1)
+    map_back = create_map_back(flat_map, new_tensor_map) #ToDo: Parameters change to include batch dim as well
+    return x[batch_indices_for_broadcast,map_back,:]
 
 def repostion_all_tensors_for_mamba_pattern():
     return
