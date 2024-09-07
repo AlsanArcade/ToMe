@@ -135,60 +135,72 @@ def merge_source(
     source = merge(source, mode="amax")
     return source
 
-def gather_values_using_indices(indices, data):
+def gather_values_using_batch_indices(data, batch_indices): #adapted include batch dim for source
     """
-    Gathers elements from the `data` tensor using the `indices` tensor.
+    Gathers elements from the `data` tensor using the `batch_indices` tensor, allowing different indices for each batch.
+    
     Args:
-    - indices (torch.Tensor): A 1D tensor of size [num_indices] with values in the range [0, num_categories-1].
+    - batch_indices (torch.Tensor): A 2D tensor of size [batch_size, num_indices] with values in the range [0, num_categories-1].
     - data (torch.Tensor): A tensor of size [batch_size, num_categories, feature_size].
-    Used like this: We have indices, where for each index/new token pos, we have the position of (one of) the original tokens
-    Additionally, we have data, the values of the new tokens
-    We use this to create a blown up version of the data tensor, where we have the current values for all the orig_tokens, wherever their position is now in the current tensor
     
     Returns:
     - torch.Tensor: A tensor of size [batch_size, num_indices, feature_size] where each element is selected 
-      according to the indices specified in `indices`.
+      according to the indices specified in `batch_indices` for each batch.
+      
+    Used like this: We have indices, where for each index/new token pos, we have the position of (one of) the original tokens
+    Additionally, we have data, the values of the new tokens
+    We use this to create a blown up version of the data tensor, where we have the current values for all the orig_tokens, wherever their position is now in the current tensor
     """
-    # Ensure indices is a 1D tensor
-    assert indices.dim() == 1, "indices must be a 1D tensor"
+    # Ensure batch_indices is a 2D tensor
+    assert batch_indices.dim() == 2, "batch_indices must be a 2D tensor"
+    
     # Get the dimensions
     batch_size, num_categories, feature_size = data.size()
-    num_indices = indices.size(0)
-    # Ensure that the values in indices are within the range [0, num_categories-1]
-    assert torch.all((0 <= indices) & (indices < num_categories)), "indices contains out-of-range values"
-    # Use the indices tensor to index into the data tensor
-    # `indices` is of shape [num_indices] so we need to broadcast it across the first dimension (batch_size)
-    gathered_data = data[:, indices, :]
-    # `gathered_data` should now be of shape [batch_size, num_indices, feature_size]
-    return gathered_data
+    batch_size_idx, num_indices = batch_indices.size()
+
+    # Ensure that batch_indices' batch_size matches data's batch_size
+    assert batch_size == batch_size_idx, "batch_indices and data must have the same batch_size"
     
-def generate_presence_mask(indices, size):
+    # Ensure that the values in batch_indices are within the range [0, num_categories-1]
+    assert torch.all((0 <= batch_indices) & (batch_indices < num_categories)), "batch_indices contains out-of-range values"
+    
+    # Use advanced indexing to gather data based on the indices for each batch
+    # To do this, we need to create an index tensor for the batch dimension
+    batch_range = torch.arange(batch_size).unsqueeze(1)  # Shape: [batch_size, 1]
+    
+    # Now use batch_indices to index into the data tensor
+    gathered_data = data[batch_range, batch_indices, :]  # Shape: [batch_size, num_indices, feature_size]
+
+    return gathered_data
+
+def generate_presence_mask(indices, size): #adapted include batch dim for source
     """
     Generates a boolean mask tensor of specified size based on the indices tensor.
 
     Args:
-    - indices (torch.Tensor): A 1D tensor containing indices, where each value is in the range [0, size-1].
+    - indices (torch.Tensor): A 2D tensor containing indices (for each batch elem), where each value is in the range [0, size-1].
     - size (int): The size of the output mask tensor.
 
     Returns:
     - torch.Tensor: A 1D boolean tensor of length `size` where each element is True if its index is present in `indices`, otherwise False.
     """
+    batch_ids = torch.arange(size[0]).unsqueeze(1)
     mask = torch.zeros(size, dtype=torch.bool)  # Initialize the mask tensor with all False values
-    mask[indices] = True  # Set True for indices in the source
+    mask[batch_ids, indices] = True  # Set True for indices in the source
     return mask
 
 
-def get_expanded_tokens_and_mask(x: torch.Tensor,source):#INPROGRESS adapted include batch dim for source
+def get_expanded_tokens_and_mask(x: torch.Tensor,source): #adapted include batch dim for source
     """
     takes the current, merged tokens tensor and the source to create a tensor where all the original tokens have their new merged/or unmerged value, no matter where they are now. Additionally give back a mask of orig_token_size where duplicates are False.
     Idea: AFTER creating the merge fnx, merging tokens AND SOURCE
     use the new source to compute the the original locations of the merged tokens and use the values+the mask to flatten the values&mask appropriate to the wanted pattern and then apply the mask(and reshape if needed)
     """
-    new_token, old_token = source.squeeze(0).shape
-    new_token_map = source.argmax(0) #Save backtranslation?
-    all_original_tokens_corresponding_merged_values = gather_values_using_indices(x,new_token_map)
+    batch_size, new_token, old_token = source.shape
+    new_token_map = source.argmax(2) #Save backtranslation?
+    all_original_tokens_corresponding_merged_values = gather_values_using_batch_indices(x,new_token_map)  
     #build on this, 
-    token_is_sole_representative_of_group = generate_presence_mask(new_token_map, old_token)
+    token_is_sole_representative_of_group = generate_presence_mask(new_token_map, (batch_size,old_token)) 
     return all_original_tokens_corresponding_merged_values, token_is_sole_representative_of_group
 
 
