@@ -135,7 +135,7 @@ def merge_source(
     source = merge(source, mode="amax")
     return source
 
-def gather_values_using_batch_indices(data, batch_indices): #adapted include batch dim for source
+def gather_values_using_batch_indices(data, batch_indices,old_token_num): #adapted include batch dim for source
     """
     Gathers elements from the `data` tensor using the `batch_indices` tensor, allowing different indices for each batch.
     
@@ -162,7 +162,7 @@ def gather_values_using_batch_indices(data, batch_indices): #adapted include bat
     assert batch_size == batch_size_idx, "batch_indices and data must have the same batch_size"
     
     # Ensure that the values in batch_indices are within the range [0, num_categories-1]
-    assert torch.all((0 <= batch_indices) & (batch_indices < num_categories)), "batch_indices contains out-of-range values"
+    assert torch.all((0 <= batch_indices) & (batch_indices < old_token_num)), "batch_indices contains out-of-range values"
     
     # Use advanced indexing to gather data based on the indices for each batch
     # To do this, we need to create an index tensor for the batch dimension
@@ -170,6 +170,7 @@ def gather_values_using_batch_indices(data, batch_indices): #adapted include bat
     
     # Now use batch_indices to index into the data tensor
     gathered_data = data[batch_range, batch_indices, :]  # Shape: [batch_size, num_indices, feature_size]
+    assert gathered_data
 
     return gathered_data
 
@@ -196,11 +197,11 @@ def get_expanded_tokens_and_mask(x: torch.Tensor,source): #adapted include batch
     Idea: AFTER creating the merge fnx, merging tokens AND SOURCE
     use the new source to compute the the original locations of the merged tokens and use the values+the mask to flatten the values&mask appropriate to the wanted pattern and then apply the mask(and reshape if needed)
     """
-    batch_size, new_token, old_token = source.shape
+    batch_size, new_token, old_token_num = source.shape
     new_token_map = source.argmax(2) #Save backtranslation?
-    all_original_tokens_corresponding_merged_values = gather_values_using_batch_indices(x,new_token_map)  
+    all_original_tokens_corresponding_merged_values = gather_values_using_batch_indices(x,new_token_map, old_token_num)  
     #build on this, 
-    token_is_sole_representative_of_group = generate_presence_mask(new_token_map, (batch_size,old_token)) 
+    token_is_sole_representative_of_group = generate_presence_mask(new_token_map, (batch_size,old_token_num)) 
     return all_original_tokens_corresponding_merged_values, token_is_sole_representative_of_group
 
 
