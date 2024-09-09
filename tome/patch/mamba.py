@@ -76,6 +76,7 @@ class ToMeBlock(models_mamba.Block):
             hidden_states: the sequence to the encoder layer (required).
             residual: hidden_states = Mixer(LN(residual))
         """
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         fused_add_norm_fn = rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
         if residual is None:
             hidden_states, residual = fused_add_norm_fn(
@@ -108,7 +109,7 @@ class ToMeBlock(models_mamba.Block):
             # REORDER FOR MAMBA
             print(f"hidden_states {hidden_states.shape}")
             hidden_states_expanded, token_is_sole_representative_of_group_map = get_expanded_tokens_and_mask(hidden_states, self._tome_info["source"])
-            hidden_states_reordered = hidden_states_expanded[:,token_is_sole_representative_of_group_map,:]
+            hidden_states_reordered = hidden_states_expanded.unsqueeze(0)[token_is_sole_representative_of_group_map.unsqueeze(0),:].reshape(hidden_states.shape) # we know that every token_is_sole_representative_of_group_map[i] has exactly num_new_tokens True values -> we can flatten&reshape
             print(f"hidden_states_reordered {hidden_states_reordered.shape}")
             # MAMBA
             x, metric = self.mixer(hidden_states_reordered, inference_params=inference_params)
@@ -116,11 +117,14 @@ class ToMeBlock(models_mamba.Block):
             #RECREATE INITIAL ORDER
             # print("hidden post mamba",x.shape)
             # Mapback test generalization
-            num_orig_tokens = self._tome_info["source"].shape[2]
-            id_tensor_expanded_to_batch_size = torch.arange(num_orig_tokens).unsqueeze(0).repeat(x.shape[0],1,1)
-            orig_tokens_pre_flat = id_tensor_expanded_to_batch_size
-            corresponding_original_tokens = self._tome_info["source"].argmax(2)
-            x = transform_post_flattened_tokens_to_position_pre_flatten( x, orig_tokens_pre_flat, corresponding_original_tokens)
+            batch_size, num_new_tokens ,num_orig_tokens = self._tome_info["source"].shape #Hier
+            token_id_tensor_expanded_to_batch_size = torch.arange(num_orig_tokens).unsqueeze(0).repeat(x.shape[0],1,1).to(device)
+            # batch_idx = torch.arange(x.shape[0]).unsqueeze(1)
+#  unsqueeze, apply mask, come back later
+            orig_pos_of_tokens_post_mamba = token_id_tensor_expanded_to_batch_size.flatten()[token_is_sole_representative_of_group_map.flatten()].reshape(batch_size, num_new_tokens) #flatten batch dim , apply mask then, reshape due to known true values per batch(always same)
+            # masks on id
+            orig_pos_of_tokens_pre_mamba = self._tome_info["source"].argmax(2)
+            x = transform_post_flattened_tokens_to_position_pre_flatten(x,orig_pos_of_tokens_pre_mamba, orig_pos_of_tokens_post_mamba)
             metric = x
             #CONTINUE
         else:
@@ -143,7 +147,7 @@ class ToMeBlock(models_mamba.Block):
                 metric,
                 r,
                 self._tome_info["source"],
-                self._tome_info["original_csl_token_pos"],
+                self._tome_info["original_csl_token_positions"],
             )
             prev_source = cp.deepcopy(self._tome_info["source"])
             self._tome_info["source"] = merge_source(
@@ -197,7 +201,6 @@ class ToMeMamba(Mamba):
         Returns: same shape as hidden_states
         """
         batch, seqlen, dim = hidden_states.shape
-        x_001 = hidden_states.shape
         # print(f"hidden size start{hidden_states.shape}")
 
         conv_state, ssm_state = None, None
@@ -218,10 +221,8 @@ class ToMeMamba(Mamba):
         )
         # print(f"hidden size after rearrange, proj:{xz.shape}")
         
-        x_002 = xz.shape
         if self.in_proj.bias is not None:
             xz = xz + rearrange(self.in_proj.bias.to(dtype=xz.dtype), "d -> d 1")
-        x_003 = xz.shape
 
         A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
         # In the backward pass we write dx and dz next to each other to avoid torch.cat
@@ -283,11 +284,12 @@ def make_tome_class(transformer_class):
             # print(f"x size after embed: {x.shape}")
             B, M, _ = x.shape
             cls_token = self.cls_token.expand(B, -1, -1)
-            self._tome_info["original_csl_token_pos"] = M // 2 # always in a in bipartitet softmatching
-            
-            # print("token pos", self._tome_info["original_csl_token_pos"])
+            # per batch element, the cls token can be in another position
+            cls_pos_orig = torch.tensor(M // 2)
+            self._tome_info["original_csl_token_positions"] = cls_pos_orig.repeat(B)
+            # print("token pos", self._tome_info["original_csl_token_positions"])
             # add cls token in the middle
-            x = torch.cat((x[:, :self._tome_info["original_csl_token_pos"], :], cls_token, x[:, self._tome_info["original_csl_token_pos"]:, :]), dim=1) #bis csl_pos-1, cls token, cls_position->ende
+            x = torch.cat((x[:, :cls_pos_orig, :], cls_token, x[:, cls_pos_orig:, :]), dim=1) #bis csl_pos-1, cls token, cls_position->ende
             # print(f"x size after cls token added : {x.shape}")
             x = x + self.pos_embed
             # print(f"x size after pos embedd : {x.shape}")
@@ -317,10 +319,8 @@ def make_tome_class(transformer_class):
                 residual_in_fp32=self.residual_in_fp32,
             )
     
-            # return only cls token if it exists
-            assert False, "Need to adjust code here to get current cls pos"
-            current_cls_pos = get_current_cls_token_pos_from_source(self._tome_info["original_csl_token_pos"], self._tome_info["source"])
-            return hidden_states[:, current_cls_pos, :]
+            current_cls_positions = get_current_cls_token_pos_from_source(self._tome_info["original_csl_token_positions"], self._tome_info["source"])
+            return hidden_states[:, current_cls_positions, :]
     
         def forward(self, x, return_features=False, inference_params=None, if_random_original_csl_token_pos=False, if_random_token_rank=False):
             self._tome_info["r"] = parse_r(len(self.layers), self.r) 

@@ -14,19 +14,21 @@ import torch
 def do_nothing(x, mode=None):
     return x
 
-def get_current_cls_token_pos_from_source(original_csl_token_pos,source):
+def get_current_cls_token_pos_from_source(original_csl_token_positions,source): #Todo -returns value, var name suggests index
     if(source== None):
-        return original_csl_token_pos
-    source_flattened = source.squeeze(0)
-    new_token_map = source_flattened.argmax(0)
-    new_cls_position = new_token_map[original_csl_token_pos]
-    return new_cls_position
+        return original_csl_token_positions
+    new_pos_of_orig_token = source.argmax(2)
+    device = source.device
+    batch_idx = torch.arange(original_csl_token_positions.shape[0]).unsqueeze(1).to(device)
+
+    new_cls_token_pos = new_pos_of_orig_token[batch_idx,original_csl_token_positions.unsqueeze(1)].squeeze(1) #should never get merged-> only one orig token corresponds to new cls token
+    return new_cls_token_pos
 
 def bipartite_soft_matching(
     metric: torch.Tensor,
     r: int,
     source,
-    original_csl_token_pos
+    original_csl_token_positions #original_csl_token_positions
 ) -> Tuple[Callable, Callable]:
     """
     Applies ToMe with a balanced matching set (50%, 50%).
@@ -41,12 +43,18 @@ def bipartite_soft_matching(
     When enabled, the class token and distillation tokens won't get merged.
     """
     def set_cls_token_scores_to_mininf(scores):
-        cls_pos = get_current_cls_token_pos_from_source(original_csl_token_pos,source)
-        cls_in_a = cls_pos%2 == 0
-        if cls_in_a:
-            scores[:,cls_pos//2,:] = -math.inf
-        else:
-            scores[:,:,cls_pos//2] = -math.inf
+        device = scores.device
+        cls_pos = get_current_cls_token_pos_from_source(original_csl_token_positions,source) # dim: b, 1
+        cls_is_in_a = cls_pos%2 == 0 #mask, in which batch elem the cls token is in a
+        batch_idx = torch.arange(original_csl_token_positions.shape[0]).unsqueeze(1).to(device)
+        cls_in_a_batch_idx = batch_idx[cls_is_in_a] #get batch idx where cls token is in a
+        cls_in_a_pos = (cls_pos[cls_is_in_a]//2).unsqueeze(1)
+        cls_in_b_batch_idx = batch_idx[~cls_is_in_a] #(reverse operator ->switches bool values)
+        cls_in_b_pos = (cls_pos[~cls_is_in_a]//2).unsqueeze(1)
+        
+        # set cls token to -inf, no matter if they are in a or b
+        scores[cls_in_a_batch_idx,cls_in_a_pos,:] = -math.inf 
+        scores[cls_in_b_batch_idx,:,cls_in_b_pos] = -math.inf
         return scores
 
 
@@ -135,7 +143,7 @@ def merge_source(
     source = merge(source, mode="amax")
     return source
 
-def gather_values_using_batch_indices(data, batch_indices,old_token_num): #adapted include batch dim for source
+def gather_values_using_batch_indices(data, batch_indices): #adapted include batch dim for source
     """
     Gathers elements from the `data` tensor using the `batch_indices` tensor, allowing different indices for each batch.
     
@@ -151,26 +159,27 @@ def gather_values_using_batch_indices(data, batch_indices,old_token_num): #adapt
     Additionally, we have data, the values of the new tokens
     We use this to create a blown up version of the data tensor, where we have the current values for all the orig_tokens, wherever their position is now in the current tensor
     """
+    device = data.device
     # Ensure batch_indices is a 2D tensor
     assert batch_indices.dim() == 2, "batch_indices must be a 2D tensor"
     
     # Get the dimensions
-    batch_size, num_categories, feature_size = data.size()
-    batch_size_idx, num_indices = batch_indices.size()
+    batch_size, new_token_num, feature_size = data.size()
+    batch_size_idx, orig_token_num = batch_indices.size()
 
     # Ensure that batch_indices' batch_size matches data's batch_size
     assert batch_size == batch_size_idx, "batch_indices and data must have the same batch_size"
     
     # Ensure that the values in batch_indices are within the range [0, num_categories-1]
-    assert torch.all((0 <= batch_indices) & (batch_indices < old_token_num)), "batch_indices contains out-of-range values"
+    assert torch.all((0 <= batch_indices) & (batch_indices < new_token_num)), "orig_tokens need to map to indices of new_token_num"
     
     # Use advanced indexing to gather data based on the indices for each batch
     # To do this, we need to create an index tensor for the batch dimension
-    batch_range = torch.arange(batch_size).unsqueeze(1)  # Shape: [batch_size, 1]
+    batch_range = torch.arange(batch_size).unsqueeze(1).to(device)  # Shape: [batch_size, 1]
     
     # Now use batch_indices to index into the data tensor
     gathered_data = data[batch_range, batch_indices, :]  # Shape: [batch_size, num_indices, feature_size]
-    assert gathered_data
+    assert gathered_data.shape == torch.Size([batch_size, orig_token_num, feature_size]) , "shape is invalid, expected{[batch_size, old_token_num, feature_size]}, got {}"
 
     return gathered_data
 
@@ -185,8 +194,9 @@ def generate_presence_mask(indices, size): #adapted include batch dim for source
     Returns:
     - torch.Tensor: A 1D boolean tensor of length `size` where each element is True if its index is present in `indices`, otherwise False.
     """
-    batch_ids = torch.arange(size[0]).unsqueeze(1)
-    mask = torch.zeros(size, dtype=torch.bool)  # Initialize the mask tensor with all False values
+    device = indices.device
+    batch_ids = torch.arange(size[0]).unsqueeze(1).to(device)
+    mask = torch.zeros(size, dtype=torch.bool).to(device)  # Initialize the mask tensor with all False values
     mask[batch_ids, indices] = True  # Set True for indices in the source
     return mask
 
@@ -194,46 +204,66 @@ def generate_presence_mask(indices, size): #adapted include batch dim for source
 def get_expanded_tokens_and_mask(x: torch.Tensor,source): #adapted include batch dim for source
     """
     takes the current, merged tokens tensor and the source to create a tensor where all the original tokens have their new merged/or unmerged value, no matter where they are now. Additionally give back a mask of orig_token_size where duplicates are False.
+    Before entering the Mamba layer, transform the tokens via this function to their original positions with duplicates.
+    Transform this row by row flattened version of the picture via the specic pattern.(and the mask)
+    After having transformed the token reihenfolge, apply the mask and then feed it into Mamba
+    !After the Mamba layer, we need to reorder them to their original position 
+    (Can't just adjust the source token, due to multiple patterns per element -> we need to unify the different sequences after each pattern anyways)
+    -> For every pattern, batch elem we have own translations? -> How did this work? 
     Idea: AFTER creating the merge fnx, merging tokens AND SOURCE
     use the new source to compute the the original locations of the merged tokens and use the values+the mask to flatten the values&mask appropriate to the wanted pattern and then apply the mask(and reshape if needed)
     """
     batch_size, new_token, old_token_num = source.shape
-    new_token_map = source.argmax(2) #Save backtranslation?
-    all_original_tokens_corresponding_merged_values = gather_values_using_batch_indices(x,new_token_map, old_token_num)  
+    new_token_map = source.argmax(1) #Save backtranslation?
+    all_original_tokens_corresponding_merged_values = gather_values_using_batch_indices(x,new_token_map)  
     #build on this, 
     token_is_sole_representative_of_group = generate_presence_mask(new_token_map, (batch_size,old_token_num)) 
     return all_original_tokens_corresponding_merged_values, token_is_sole_representative_of_group
 
 
 
-def create_map_back(flat_map, new_tensor_map): #adapted include batch dim for source
+# MAP BACK TO PRE PATTERNIZED POSITION FUNCTIONS
+
+
+def create_map_back(orig_pos_of_tokens_pre_mamba, orig_pos_of_tokens_post_mamba): #adapted include batch dim for source
     """
-    Creates the map_back tensor that maps positions in flat_map to positions in new_tensor_map for each batch.
+    Creates the map_back tensor that maps positions in orig_pos_of_tokens_pre_mamba to positions in orig_pos_of_tokens_post_mamba for each batch.
+    orig_pos_of_tokens_pre_mamba: 
+    orig_pos_of_tokens_post_mamba: 
 
     Args:
-    - flat_map (torch.Tensor): A 2D tensor of size [batch_size, new_token_num] with elements in the range [0, orig_token_num-1].
-    - new_tensor_map (torch.Tensor): A 2D tensor of size [batch_size, new_token_num] with elements in the range [0, orig_token_num-1].
+    - orig_pos_of_tokens_pre_mamba (torch.Tensor): A 2D tensor of size [batch_size, new_token_num] with elements in the range [0, orig_token_num-1].
+    - orig_pos_of_tokens_post_mamba (torch.Tensor): A 2D tensor of size [batch_size, new_token_num] with elements in the range [0, orig_token_num-1].
 
     Returns:
     - torch.Tensor: A 2D tensor of size [batch_size, new_token_num] where map_back[i, k] gives the index j such that 
-                    new_tensor_map[i, j] == flat_map[i, k] for each batch i.
+                    orig_pos_of_tokens_post_mamba[i, j] == orig_pos_of_tokens_pre_mamba[i, k] for each batch i.
     """
-    # flat_map: [batch_size, new_token_num]
-    # new_tensor_map: [batch_size, new_token_num]
+    # orig_pos_of_tokens_pre_mamba: [batch_size, new_token_num]
+    # orig_pos_of_tokens_post_mamba: [batch_size, new_token_num]
 
-    # Broadcasting and matching each element in flat_map to elements in new_tensor_map for each batch
-    match_matrix = flat_map.unsqueeze(2) == new_tensor_map.unsqueeze(1)  # [batch_size, new_token_num, new_token_num]
+    # Broadcasting and matching each element in orig_pos_of_tokens_pre_mamba to elements in orig_pos_of_tokens_post_mamba for each batch
+    match_matrix = (orig_pos_of_tokens_pre_mamba.unsqueeze(2) == orig_pos_of_tokens_post_mamba.unsqueeze(1)).int() # [batch_size, new_token_num, new_token_num]
 
     # Using argmax to find the index where elements match along the new_token_num dimension
     map_back = match_matrix.argmax(dim=2)  # [batch_size, new_token_num]
 
     return map_back
 
-def transform_post_flattened_tokens_to_position_pre_flatten(x,flat_map, new_tensor_map): #adapted include batch dim for source
+def transform_post_flattened_tokens_to_position_pre_flatten(x,orig_pos_of_tokens_pre_mamba, orig_pos_of_tokens_post_mamba): #adapted include batch dim for source
+    """
+    Args:
+    - orig_pos_of_tokens_pre_mamba (torch.Tensor): A 2D tensor of size [batch_size, new_token_num] with elements in the range [0, orig_token_num-1].
+    - orig_pos_of_tokens_post_mamba (torch.Tensor): A 2D tensor of size [batch_size, new_token_num] with elements in the range [0, orig_token_num-1].
+    """
+    device = x.device
     batch_size = x.shape[0]
-    batch_indices_for_broadcast = torch.arange(batch_size).unsqueeze(1)
-    map_back = create_map_back(flat_map, new_tensor_map) #ToDo: Parameters change to include batch dim as well
-    return x[batch_indices_for_broadcast,map_back,:]
+    batch_indices_for_broadcast = torch.arange(batch_size).unsqueeze(1).to(device)
+    map_post_mamba_pos_to_pre_mamba_pos = create_map_back(orig_pos_of_tokens_pre_mamba, orig_pos_of_tokens_post_mamba) #ToDo: Parameters change to include batch dim as well
+    return x[batch_indices_for_broadcast,map_post_mamba_pos_to_pre_mamba_pos,:]
+    # map back: batchsize, num_new_tokens:
+    # batch_indices_for_broadcast: batchsize, 1
+    # -> for every batch_elem i: choose the indices in map_post_mamba_pos_to_pre_mamba_pos[i]
 
 def repostion_all_tensors_for_mamba_pattern():
     return
