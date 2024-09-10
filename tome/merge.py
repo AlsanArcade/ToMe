@@ -17,11 +17,16 @@ def do_nothing(x, mode=None):
 def get_current_cls_token_pos_from_source(original_csl_token_positions,source): #Todo -returns value, var name suggests index
     if(source== None):
         return original_csl_token_positions
-    new_pos_of_orig_token = source.argmax(2)
+    new_pos_of_orig_token = source.argmax(1)
+    x = new_pos_of_orig_token[:,364]
+    x2 = new_pos_of_orig_token[:,700]
     device = source.device
     batch_idx = torch.arange(original_csl_token_positions.shape[0]).unsqueeze(1).to(device)
+    original_cls_pos_unsqueezed = original_csl_token_positions.unsqueeze(1)
 
-    new_cls_token_pos = new_pos_of_orig_token[batch_idx,original_csl_token_positions.unsqueeze(1)].squeeze(1) #should never get merged-> only one orig token corresponds to new cls token
+    # this doesnt work
+    new_cls_token_pos = new_pos_of_orig_token[batch_idx,original_cls_pos_unsqueezed] #should never get merged-> only one orig token corresponds to new cls token
+    new_cls_token_pos = new_cls_token_pos.squeeze(1) #should never get merged-> only one orig token corresponds to new cls token
     return new_cls_token_pos
 
 def bipartite_soft_matching(
@@ -45,16 +50,26 @@ def bipartite_soft_matching(
     def set_cls_token_scores_to_mininf(scores):
         device = scores.device
         cls_pos = get_current_cls_token_pos_from_source(original_csl_token_positions,source) # dim: b, 1
+        x = cls_pos.max()
+        y = cls_pos.min()
+        z=scores.shape
         cls_is_in_a = cls_pos%2 == 0 #mask, in which batch elem the cls token is in a
+        cls_is_in_b = ~cls_is_in_a
         batch_idx = torch.arange(original_csl_token_positions.shape[0]).unsqueeze(1).to(device)
+        
         cls_in_a_batch_idx = batch_idx[cls_is_in_a] #get batch idx where cls token is in a
-        cls_in_a_pos = (cls_pos[cls_is_in_a]//2).unsqueeze(1)
-        cls_in_b_batch_idx = batch_idx[~cls_is_in_a] #(reverse operator ->switches bool values)
-        cls_in_b_pos = (cls_pos[~cls_is_in_a]//2).unsqueeze(1)
+        cls_in_a_pos = ((cls_pos[cls_is_in_a])//2).unsqueeze(1)
+        
+        cls_in_b_batch_idx = batch_idx[cls_is_in_b] #(reverse operator ->switches bool values)
+        cls_in_b_pos = ((cls_pos[cls_is_in_b])//2).unsqueeze(1)
         
         # set cls token to -inf, no matter if they are in a or b
-        scores[cls_in_a_batch_idx,cls_in_a_pos,:] = -math.inf 
-        scores[cls_in_b_batch_idx,:,cls_in_b_pos] = -math.inf
+        if(len(cls_in_a_pos>0)):
+            c=0
+            scores[cls_in_a_batch_idx,cls_in_a_pos,:] = -math.inf 
+        if(len(cls_in_b_pos>0)):
+            c=0
+            scores[cls_in_b_batch_idx,:,cls_in_b_pos] = -math.inf
         return scores
 
 

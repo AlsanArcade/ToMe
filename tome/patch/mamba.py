@@ -320,7 +320,8 @@ def make_tome_class(transformer_class):
             )
     
             current_cls_positions = get_current_cls_token_pos_from_source(self._tome_info["original_csl_token_positions"], self._tome_info["source"])
-            return hidden_states[:, current_cls_positions, :]
+            result =  hidden_states[:, current_cls_positions[0], :]
+            return result
     
         def forward(self, x, return_features=False, inference_params=None, if_random_original_csl_token_pos=False, if_random_token_rank=False):
             self._tome_info["r"] = parse_r(len(self.layers), self.r) 
