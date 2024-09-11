@@ -103,14 +103,14 @@ class ToMeBlock(models_mamba.Block):
         
 
         if(self._tome_info["source"]!=None):
-            print("source route entered")
+            # print("source route entered")
             # LATER: MIGHT NEED TO REARRANGE HERE; THOUGH WE MIGHT NEED TO REARRANGE BACK AFTER THIS LAYER TO KEEP THE RESIDUALS 
             #I'll just rearrange here, as this is possible here and less hassle
             # REORDER FOR MAMBA
-            print(f"hidden_states {hidden_states.shape}")
+            # print(f"hidden_states {hidden_states.shape}")
             hidden_states_expanded, token_is_sole_representative_of_group_map = get_expanded_tokens_and_mask(hidden_states, self._tome_info["source"])
             hidden_states_reordered = hidden_states_expanded.unsqueeze(0)[token_is_sole_representative_of_group_map.unsqueeze(0),:].reshape(hidden_states.shape) # we know that every token_is_sole_representative_of_group_map[i] has exactly num_new_tokens True values -> we can flatten&reshape
-            print(f"hidden_states_reordered {hidden_states_reordered.shape}")
+            # print(f"hidden_states_reordered {hidden_states_reordered.shape}")
             # MAMBA
             x, metric = self.mixer(hidden_states_reordered, inference_params=inference_params)
     
@@ -355,7 +355,7 @@ def apply_patch(
     ToMeVisionMamba = make_tome_class(model.__class__)
 
     model.__class__ = ToMeVisionMamba
-    model.r = 25#(1, -1.0) # 0
+    model.r = 15#(1, -1.0) # 0
     model._tome_info = {
         "r": model.r,
         "size": None,
