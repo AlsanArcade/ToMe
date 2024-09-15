@@ -8,7 +8,7 @@
 # timm: https://github.com/rwightman/pytorch-image-models/tree/master/timm
 # --------------------------------------------------------
 
-# Mehrere wrapper-> mamba patchen, letzte mlp wird aus der forward funktion genommen, 
+# Mehrere wrapper-> mamba patchen, letzte mlp wird aus der forward funktion genommen,
 # dann ein wrapper, der die neue mamba mit einer anderen klasse, welche das forward enthält, in einer forward verbindet
 # dann in mamba die mamba_inner_fn_no_out_proj funktion anpassen, dass für den merge relevante dinge zurückgegeben werden
 import math
@@ -43,9 +43,20 @@ except ImportError:
     causal_conv1d_fn, causal_conv1d_update = None
 
 try:
-    from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, mamba_inner_fn, bimamba_inner_fn, mamba_inner_fn_no_out_proj
+    from mamba_ssm.ops.selective_scan_interface import (
+        selective_scan_fn,
+        mamba_inner_fn,
+        bimamba_inner_fn,
+        mamba_inner_fn_no_out_proj,
+    )
 except ImportError:
-    selective_scan_fn, mamba_inner_fn, bimamba_inner_fn, mamba_inner_fn_no_out_proj = None, None, None, None, None
+    selective_scan_fn, mamba_inner_fn, bimamba_inner_fn, mamba_inner_fn_no_out_proj = (
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
 
 try:
     from mamba_ssm.ops.triton.selective_state_update import selective_state_update
@@ -57,7 +68,14 @@ try:
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
-from tome.merge import bipartite_soft_matching, merge_source, merge_wavg, get_current_cls_token_pos_from_source, get_expanded_tokens_and_mask, transform_post_flattened_tokens_to_position_pre_flatten
+from tome.merge import (
+    bipartite_soft_matching,
+    merge_source,
+    merge_wavg,
+    get_current_cls_token_pos_from_source,
+    get_expanded_tokens_and_mask,
+    transform_post_flattened_tokens_to_position_pre_flatten,
+)
 from tome.utils import parse_r
 
 
@@ -67,8 +85,12 @@ class ToMeBlock(models_mamba.Block):
      - Apply ToMe between the attention and mlp blocks
      - Compute and propogate token size and potentially the token sources.
     """
+
     def forward(
-        self, hidden_states: Tensor, residual: Optional[Tensor] = None, inference_params=None
+        self,
+        hidden_states: Tensor,
+        residual: Optional[Tensor] = None,
+        inference_params=None,
     ):
         r"""Pass the input through the encoder layer.
 
@@ -77,7 +99,9 @@ class ToMeBlock(models_mamba.Block):
             residual: hidden_states = Mixer(LN(residual))
         """
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        fused_add_norm_fn = rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
+        fused_add_norm_fn = (
+            rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
+        )
         if residual is None:
             hidden_states, residual = fused_add_norm_fn(
                 hidden_states,
@@ -97,48 +121,54 @@ class ToMeBlock(models_mamba.Block):
                 prenorm=True,
                 residual_in_fp32=self.residual_in_fp32,
                 eps=self.norm.eps,
-            )    
+            )
         x_0 = hidden_states.shape
         y_0 = residual.shape
-        
 
-        if(self._tome_info["source"]!=None):
-            # print("source route entered")
-            # LATER: MIGHT NEED TO REARRANGE HERE; THOUGH WE MIGHT NEED TO REARRANGE BACK AFTER THIS LAYER TO KEEP THE RESIDUALS 
-            #I'll just rearrange here, as this is possible here and less hassle
+        if self._tome_info["source"] != None:
+
             # REORDER FOR MAMBA
-            # print(f"hidden_states {hidden_states.shape}")
-            hidden_states_expanded, token_is_sole_representative_of_group_map = get_expanded_tokens_and_mask(hidden_states, self._tome_info["source"])
-            hidden_states_reordered = hidden_states_expanded.unsqueeze(0)[token_is_sole_representative_of_group_map.unsqueeze(0),:].reshape(hidden_states.shape) # we know that every token_is_sole_representative_of_group_map[i] has exactly num_new_tokens True values -> we can flatten&reshape
-            # print(f"hidden_states_reordered {hidden_states_reordered.shape}")
+            hidden_states_expanded, token_is_sole_representative_of_group_map = (
+                get_expanded_tokens_and_mask(hidden_states, self._tome_info["source"])
+            )
+            hidden_states_reordered = hidden_states_expanded[
+                token_is_sole_representative_of_group_map, :
+            ]
+            hidden_states_reordered_reshaped = hidden_states_reordered.reshape(
+                hidden_states.shape
+            )  # we know that every token_is_sole_representative_of_group_map[i] has exactly num_new_tokens True values -> we can flatten&reshape
+
             # MAMBA
-            x, metric = self.mixer(hidden_states_reordered, inference_params=inference_params)
-    
-            #RECREATE INITIAL ORDER
-            # print("hidden post mamba",x.shape)
-            # Mapback test generalization
-            batch_size, num_new_tokens ,num_orig_tokens = self._tome_info["source"].shape #Hier
-            token_id_tensor_expanded_to_batch_size = torch.arange(num_orig_tokens).unsqueeze(0).repeat(x.shape[0],1,1).to(device)
-            # batch_idx = torch.arange(x.shape[0]).unsqueeze(1)
-#  unsqueeze, apply mask, come back later
-            orig_pos_of_tokens_post_mamba = token_id_tensor_expanded_to_batch_size.flatten()[token_is_sole_representative_of_group_map.flatten()].reshape(batch_size, num_new_tokens) #flatten batch dim , apply mask then, reshape due to known true values per batch(always same)
-            # masks on id
+            x, metric = self.mixer(
+                hidden_states_reordered_reshaped, inference_params=inference_params
+            )
+
+            # RECREATE INITIAL ORDER
+            batch_size, num_new_tokens, num_orig_tokens = self._tome_info[
+                "source"
+            ].shape  # Hier
+            token_id_tensor_expanded_to_batch_size = (
+                torch.arange(num_orig_tokens)
+                .unsqueeze(0)
+                .repeat(x.shape[0], 1, 1)
+                .to(device)
+            )
+            orig_pos_of_tokens_post_mamba = token_id_tensor_expanded_to_batch_size.flatten()[
+                token_is_sole_representative_of_group_map.flatten()
+            ].reshape(
+                batch_size, num_new_tokens
+            )  # flatten batch dim , apply mask then, reshape due to known true values per batch(always same)
             orig_pos_of_tokens_pre_mamba = self._tome_info["source"].argmax(2)
-            x = transform_post_flattened_tokens_to_position_pre_flatten(x,orig_pos_of_tokens_pre_mamba, orig_pos_of_tokens_post_mamba)
+            x = transform_post_flattened_tokens_to_position_pre_flatten(
+                x, orig_pos_of_tokens_pre_mamba, orig_pos_of_tokens_post_mamba
+            )
             metric = x
-            #CONTINUE
+            # CONTINUE
         else:
             x, metric = self.mixer(hidden_states, inference_params=inference_params)
-    
-        
-        
-        #Optimized mapback for vim
-        # orig_index_of tokens = torch.arange(num_orig_tokens)[token_is_sole_representative_of_group_map]
 
-        
-        
-        
-        
+        # Optimized mapback for vim
+        # orig_index_of tokens = torch.arange(num_orig_tokens)[token_is_sole_representative_of_group_map]
 
         r = self._tome_info["r"].pop(0)
         if r > 0:
@@ -153,37 +183,27 @@ class ToMeBlock(models_mamba.Block):
             self._tome_info["source"] = merge_source(
                 merge, x, self._tome_info["source"]
             )
-            
+
             hidden_orig = x
-            # x, self._tome_info["size"] = merge_wavg(merge, x, self._tome_info["size"])
             x = merge(x)
-            # print(f"delta sum hidden: {hidden_orig.sum()-x.sum()} , shapes: {hidden_orig.shape}{x.shape}") #{unmerge(x).shape}")
-            # self.compare_tensors(hidden_orig,x)
-            # self.compare_tensors(hidden_orig,(x))
             residual_orig = residual
             residual = merge(residual)
-            # residual, self._tome_info["size_residual"] = merge(residual, self._tome_info["size_residual"]) 
-            # print(f"delta sum residual: {residual_orig.sum()-residual.sum()}, shapes: {residual_orig.shape}{unmerge(residual).shape}")
-            # residual = merge(residual) -> macht gerade kein unterschied -> iwo muss ein Fehler sein
-            
 
         hidden_states = F.linear(x, self.out_proj_weight, self.out_proj_bias)
-        # x_1 = hidden_states.shape
-        # y_1 = residual.shape
-        # print(self._tome_info["source"])
+
         return hidden_states, residual
-        
-    def compare_tensors(self,t1,t2):
+
+    def compare_tensors(self, t1, t2):
         t1_slice = t1[0, :10, :5]
         t2_slice = t2[0, :10, :5]
         # print(t1_slice)
         # print(t2_slice)
         # Calculating the Euclidean distance for each of the first 30 tokens
         distances = t1_slice - t2_slice
-        
+
         # Convert distances to a list (optional)
         distances_list = distances.tolist()
-        
+
         # Output the distances
         # print(distances_list)
 
@@ -220,13 +240,15 @@ class ToMeMamba(Mamba):
             l=seqlen,
         )
         # print(f"hidden size after rearrange, proj:{xz.shape}")
-        
+
         if self.in_proj.bias is not None:
             xz = xz + rearrange(self.in_proj.bias.to(dtype=xz.dtype), "d -> d 1")
 
         A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
         # In the backward pass we write dx and dz next to each other to avoid torch.cat
-        if self.use_fast_path and inference_params is None:  # Doesn't support outputting the states
+        if (
+            self.use_fast_path and inference_params is None
+        ):  # Doesn't support outputting the states
             A_b = -torch.exp(self.A_b_log.float())
             out = mamba_inner_fn_no_out_proj(
                 xz,
@@ -259,15 +281,14 @@ class ToMeMamba(Mamba):
             z1 = out_b.shape
             z3 = out_mixed.shape
 
-            metric = out_mixed # oder einfach (out + out_b.flip([-1]) ?
-            
+            metric = out_mixed  # oder einfach (out + out_b.flip([-1]) ?
+
         else:
             assert False
         if self.init_layer_scale is not None:
-                out = out * self.gamma    
+            out = out * self.gamma
         # return out
         return out_mixed, metric
-
 
 
 def make_tome_class(transformer_class):
@@ -276,7 +297,14 @@ def make_tome_class(transformer_class):
         Modifications:
         - Initialize r, token size, and token sources.
         """
-        def forward_features(self, x, inference_params=None, if_random_original_csl_token_pos=False, if_random_token_rank=False):
+
+        def forward_features(
+            self,
+            x,
+            inference_params=None,
+            if_random_original_csl_token_pos=False,
+            if_random_token_rank=False,
+        ):
             # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
             # with slight modifications to add the dist_token
             # print(f"x size before embed: {x.shape}")
@@ -289,26 +317,29 @@ def make_tome_class(transformer_class):
             self._tome_info["original_csl_token_positions"] = cls_pos_orig.repeat(B)
             # print("token pos", self._tome_info["original_csl_token_positions"])
             # add cls token in the middle
-            x = torch.cat((x[:, :cls_pos_orig, :], cls_token, x[:, cls_pos_orig:, :]), dim=1) #bis csl_pos-1, cls token, cls_position->ende
+            x = torch.cat(
+                (x[:, :cls_pos_orig, :], cls_token, x[:, cls_pos_orig:, :]), dim=1
+            )  # bis csl_pos-1, cls token, cls_position->ende
             # print(f"x size after cls token added : {x.shape}")
             x = x + self.pos_embed
             # print(f"x size after pos embedd : {x.shape}")
-    
+
             x = self.pos_drop(x)
             # print(f"x size after pos_drop : {x.shape}")
-    
-    
+
             # mamba impl
             residual = None
             hidden_states = x
             for layer in self.layers:
-    
+
                 hidden_states, residual = layer(
                     hidden_states, residual, inference_params=inference_params
                 )
             debug = hidden_states.sum()
             # Set prenorm=False here since we don't need the residual
-            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm_f, RMSNorm) else layer_norm_fn
+            fused_add_norm_fn = (
+                rms_norm_fn if isinstance(self.norm_f, RMSNorm) else layer_norm_fn
+            )
             hidden_states = fused_add_norm_fn(
                 self.drop_path(hidden_states),
                 self.norm_f.weight,
@@ -318,25 +349,40 @@ def make_tome_class(transformer_class):
                 prenorm=False,
                 residual_in_fp32=self.residual_in_fp32,
             )
-    
-            current_cls_positions = get_current_cls_token_pos_from_source(self._tome_info["original_csl_token_positions"], self._tome_info["source"])
-            result =  hidden_states[:, current_cls_positions[0], :]
+
+            current_cls_positions = get_current_cls_token_pos_from_source(
+                self._tome_info["original_csl_token_positions"],
+                self._tome_info["source"],
+            )
+            result = hidden_states[:, current_cls_positions[0], :]
             return result
-    
-        def forward(self, x, return_features=False, inference_params=None, if_random_original_csl_token_pos=False, if_random_token_rank=False):
-            self._tome_info["r"] = parse_r(len(self.layers), self.r) 
+
+        def forward(
+            self,
+            x,
+            return_features=False,
+            inference_params=None,
+            if_random_original_csl_token_pos=False,
+            if_random_token_rank=False,
+        ):
+            self._tome_info["r"] = parse_r(len(self.layers), self.r)
             self._tome_info["size"] = None
             self._tome_info["size_residual"] = None
             self._tome_info["source"] = None
-            
-            x = self.forward_features(x, inference_params, if_random_original_csl_token_pos=if_random_original_csl_token_pos, if_random_token_rank=if_random_token_rank)
+
+            x = self.forward_features(
+                x,
+                inference_params,
+                if_random_original_csl_token_pos=if_random_original_csl_token_pos,
+                if_random_token_rank=if_random_token_rank,
+            )
             if return_features:
                 return x
             x = self.head(x)
-            if self.final_pool_type == 'max':
+            if self.final_pool_type == "max":
                 raise ValueError("should always be: final_pool_type=mean")
             return x
-            
+
     return ToMeVisionMamba
 
 
@@ -355,7 +401,7 @@ def apply_patch(
     ToMeVisionMamba = make_tome_class(model.__class__)
 
     model.__class__ = ToMeVisionMamba
-    model.r = 15#(1, -1.0) # 0
+    model.r = 15  # (1, -1.0) # 0
     model._tome_info = {
         "r": model.r,
         "size": None,
@@ -388,6 +434,5 @@ def apply_patch(
             i += 1
     x = "I'm a breakpoint, yeah!"
 
+
 # def reorderMergedTokensToKeepFlattenedOrder():
-    
-    
