@@ -354,6 +354,18 @@ def make_tome_class(transformer_class):
                 self._tome_info["original_csl_token_positions"],
                 self._tome_info["source"],
             )
+            source = self._tome_info["source"]
+            new_pos_of_cls_token_max = source.argmax(1)[:, cls_pos_orig]
+            # orig_cls_token_ = source[:, :, cls_pos_orig]  # .sum(dim=-1)
+            # orig_pos_of_cls_3 = orig_pos_of_cls_2.sum(dim=-1).max()
+            new_pos_cls = source.argmax(2)[:, current_cls_positions]
+            orig_tokens_of_new_cls_pos = source[:, current_cls_positions[0], :]
+            orig_tokens_of_new_cls_pos_sum = orig_tokens_of_new_cls_pos.sum(
+                dim=-1
+            ).max()
+            min = current_cls_positions.min()
+            max = current_cls_positions.max()  # cls are not getting merged
+
             result = hidden_states[:, current_cls_positions[0], :]
             return result
 
@@ -401,7 +413,7 @@ def apply_patch(
     ToMeVisionMamba = make_tome_class(model.__class__)
 
     model.__class__ = ToMeVisionMamba
-    model.r = 15  # (1, -1.0) # 0
+    model.r = 1  # (1, -1.0) # 0
     model._tome_info = {
         "r": model.r,
         "size": None,
