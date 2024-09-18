@@ -1,0 +1,58 @@
+r parameter is 5
+
+Test:  [  0/521]  eta: 0:58:27  loss: 1.2158 (1.2158)  acc1: 82.2917 (82.2917)  acc5: 94.7917 (94.7917)  time: 6.7317  data: 1.2615  max mem: 1648
+Test:  [ 10/521]  eta: 0:33:17  loss: nan (nan)  acc1: 79.1667 (78.9773)  acc5: 92.7083 (93.0871)  time: 3.9095  data: 0.1150  max mem: 1649
+Test:  [ 20/521]  eta: 0:31:28  loss: nan (nan)  acc1: 78.1250 (78.5714)  acc5: 92.7083 (92.6091)  time: 3.6218  data: 0.0004  max mem: 1649
+Test:  [ 30/521]  eta: 0:30:28  loss: nan (nan)  acc1: 78.1250 (78.4610)  acc5: 92.7083 (92.8091)  time: 3.6213  data: 0.0004  max mem: 1649
+Test:  [ 40/521]  eta: 0:29:39  loss: nan (nan)  acc1: 78.1250 (78.9888)  acc5: 93.7500 (93.0132)  time: 3.6248  data: 0.0004  max mem: 1649
+Test:  [ 50/521]  eta: 0:28:53  loss: nan (nan)  acc1: 79.1667 (79.0237)  acc5: 93.7500 (93.1168)  time: 3.6124  data: 0.0004  max mem: 1649
+Test:  [ 60/521]  eta: 0:28:11  loss: nan (nan)  acc1: 78.1250 (78.7739)  acc5: 92.7083 (92.9645)  time: 3.6077  data: 0.0004  max mem: 1649
+Test:  [ 70/521]  eta: 0:27:31  loss: nan (nan)  acc1: 77.0833 (78.5651)  acc5: 92.7083 (92.9431)  time: 3.6177  data: 0.0004  max mem: 1649
+Test:  [ 80/521]  eta: 0:26:52  loss: nan (nan)  acc1: 78.1250 (78.7809)  acc5: 92.7083 (92.9655)  time: 3.6201  data: 0.0004  max mem: 1649
+Test:  [ 90/521]  eta: 0:26:14  loss: nan (nan)  acc1: 80.2083 (78.8118)  acc5: 92.7083 (93.0288)  time: 3.6229  data: 0.0004  max mem: 1649
+Test:  [100/521]  eta: 0:25:36  loss: nan (nan)  acc1: 80.2083 (78.8469)  acc5: 92.7083 (93.0796)  time: 3.6199  data: 0.0004  max mem: 1649
+Test:  [110/521]  eta: 0:24:58  loss: nan (nan)  acc1: 80.2083 (78.8664)  acc5: 92.7083 (92.9993)  time: 3.6152  data: 0.0004  max mem: 1649
+Test:  [120/521]  eta: 0:24:22  loss: nan (nan)  acc1: 78.1250 (78.8395)  acc5: 92.7083 (93.0355)  time: 3.6309  data: 0.0004  max mem: 1649
+Test:  [130/521]  eta: 0:23:45  loss: nan (nan)  acc1: 80.2083 (79.0315)  acc5: 94.7917 (93.1536)  time: 3.6470  data: 0.0004  max mem: 1649
+Test:  [140/521]  eta: 0:23:09  loss: nan (nan)  acc1: 80.2083 (78.9377)  acc5: 92.7083 (93.1368)  time: 3.6536  data: 0.0004  max mem: 1649
+Test:  [150/521]  eta: 0:22:33  loss: nan (nan)  acc1: 77.0833 (78.9390)  acc5: 92.7083 (93.1222)  time: 3.6631  data: 0.0004  max mem: 1649
+Test:  [160/521]  eta: 0:21:57  loss: nan (nan)  acc1: 80.2083 (78.9984)  acc5: 92.7083 (93.1289)  time: 3.6618  data: 0.0004  max mem: 1649
+Test:  [170/521]  eta: 0:21:21  loss: nan (nan)  acc1: 80.2083 (79.0814)  acc5: 94.7917 (93.1530)  time: 3.6622  data: 0.0004  max mem: 1649
+Test:  [180/521]  eta: 0:20:45  loss: nan (nan)  acc1: 78.1250 (79.0343)  acc5: 91.6667 (93.0939)  time: 3.6661  data: 0.0004  max mem: 1649
+Test:  [190/521]  eta: 0:20:08  loss: nan (nan)  acc1: 78.1250 (79.0958)  acc5: 93.7500 (93.1883)  time: 3.6616  data: 0.0004  max mem: 1649
+Test:  [200/521]  eta: 0:19:32  loss: nan (nan)  acc1: 78.1250 (79.0838)  acc5: 93.7500 (93.1955)  time: 3.6645  data: 0.0004  max mem: 1649
+Test:  [210/521]  eta: 0:18:56  loss: nan (nan)  acc1: 78.1250 (79.0087)  acc5: 92.7083 (93.1329)  time: 3.6641  data: 0.0004  max mem: 1649
+Test:  [220/521]  eta: 0:18:19  loss: nan (nan)  acc1: 78.1250 (78.9027)  acc5: 92.7083 (93.0854)  time: 3.6631  data: 0.0004  max mem: 1649
+Test:  [230/521]  eta: 0:17:43  loss: nan (nan)  acc1: 78.1250 (78.9277)  acc5: 92.7083 (93.0601)  time: 3.6623  data: 0.0004  max mem: 1649
+Test:  [240/521]  eta: 0:17:06  loss: nan (nan)  acc1: 79.1667 (78.8771)  acc5: 92.7083 (93.0628)  time: 3.6543  data: 0.0004  max mem: 1649
+Test:  [250/521]  eta: 0:16:30  loss: nan (nan)  acc1: 80.2083 (79.0048)  acc5: 92.7083 (93.0528)  time: 3.6547  data: 0.0004  max mem: 1649
+Test:  [260/521]  eta: 0:15:53  loss: nan (nan)  acc1: 80.2083 (78.8913)  acc5: 92.7083 (93.0556)  time: 3.6490  data: 0.0004  max mem: 1649
+Test:  [270/521]  eta: 0:15:17  loss: nan (nan)  acc1: 77.0833 (78.8669)  acc5: 91.6667 (93.0389)  time: 3.6503  data: 0.0004  max mem: 1649
+Test:  [280/521]  eta: 0:14:40  loss: nan (nan)  acc1: 78.1250 (78.8738)  acc5: 92.7083 (93.0531)  time: 3.6564  data: 0.0004  max mem: 1649
+Test:  [290/521]  eta: 0:14:03  loss: nan (nan)  acc1: 80.2083 (78.8839)  acc5: 92.7083 (93.0484)  time: 3.6529  data: 0.0004  max mem: 1649
+Test:  [300/521]  eta: 0:13:27  loss: nan (nan)  acc1: 78.1250 (78.8725)  acc5: 93.7500 (93.0302)  time: 3.6573  data: 0.0004  max mem: 1649
+Test:  [310/521]  eta: 0:12:50  loss: nan (nan)  acc1: 78.1250 (78.9289)  acc5: 93.7500 (93.0533)  time: 3.6521  data: 0.0004  max mem: 1649
+Test:  [320/521]  eta: 0:12:14  loss: nan (nan)  acc1: 79.1667 (78.9265)  acc5: 93.7500 (93.0458)  time: 3.6522  data: 0.0004  max mem: 1649
+Test:  [330/521]  eta: 0:11:37  loss: nan (nan)  acc1: 79.1667 (78.9275)  acc5: 92.7083 (93.0356)  time: 3.6538  data: 0.0004  max mem: 1649
+Test:  [340/521]  eta: 0:11:01  loss: nan (nan)  acc1: 79.1667 (78.9620)  acc5: 92.7083 (93.0230)  time: 3.6558  data: 0.0004  max mem: 1649
+Test:  [350/521]  eta: 0:10:24  loss: nan (nan)  acc1: 80.2083 (79.0094)  acc5: 93.7500 (93.0348)  time: 3.6550  data: 0.0004  max mem: 1649
+Test:  [360/521]  eta: 0:09:48  loss: nan (nan)  acc1: 80.2083 (79.0311)  acc5: 92.7083 (93.0257)  time: 3.6464  data: 0.0004  max mem: 1649
+Test:  [370/521]  eta: 0:09:11  loss: nan (nan)  acc1: 79.1667 (79.0375)  acc5: 93.7500 (93.0453)  time: 3.6730  data: 0.0004  max mem: 1649
+Test:  [380/521]  eta: 0:08:35  loss: nan (nan)  acc1: 78.1250 (79.0190)  acc5: 93.7500 (93.0474)  time: 3.7194  data: 0.0004  max mem: 1649
+Test:  [390/521]  eta: 0:07:59  loss: nan (nan)  acc1: 79.1667 (79.0521)  acc5: 92.7083 (93.0707)  time: 3.7087  data: 0.0004  max mem: 1649
+Test:  [400/521]  eta: 0:07:22  loss: nan (nan)  acc1: 80.2083 (79.1017)  acc5: 93.7500 (93.0772)  time: 3.6899  data: 0.0004  max mem: 1649
+Test:  [410/521]  eta: 0:06:46  loss: nan (nan)  acc1: 79.1667 (79.1033)  acc5: 92.7083 (93.0784)  time: 3.6949  data: 0.0004  max mem: 1649
+Test:  [420/521]  eta: 0:06:09  loss: nan (nan)  acc1: 79.1667 (79.0850)  acc5: 92.7083 (93.0721)  time: 3.6901  data: 0.0004  max mem: 1649
+Test:  [430/521]  eta: 0:05:33  loss: nan (nan)  acc1: 79.1667 (79.1038)  acc5: 92.7083 (93.0709)  time: 3.6821  data: 0.0004  max mem: 1649
+Test:  [440/521]  eta: 0:04:56  loss: nan (nan)  acc1: 80.2083 (79.1265)  acc5: 93.7500 (93.0626)  time: 3.6701  data: 0.0004  max mem: 1649
+Test:  [450/521]  eta: 0:04:19  loss: nan (nan)  acc1: 81.2500 (79.1736)  acc5: 93.7500 (93.0987)  time: 3.6577  data: 0.0004  max mem: 1649
+Test:  [460/521]  eta: 0:03:43  loss: nan (nan)  acc1: 78.1250 (79.1373)  acc5: 92.7083 (93.0925)  time: 3.6486  data: 0.0004  max mem: 1649
+Test:  [470/521]  eta: 0:03:06  loss: nan (nan)  acc1: 78.1250 (79.1180)  acc5: 92.7083 (93.0976)  time: 3.6488  data: 0.0004  max mem: 1649
+Test:  [480/521]  eta: 0:02:30  loss: nan (nan)  acc1: 79.1667 (79.1428)  acc5: 93.7500 (93.1046)  time: 3.6396  data: 0.0004  max mem: 1649
+Test:  [490/521]  eta: 0:01:53  loss: nan (nan)  acc1: 80.2083 (79.1624)  acc5: 93.7500 (93.0923)  time: 3.6363  data: 0.0004  max mem: 1649
+Test:  [500/521]  eta: 0:01:16  loss: nan (nan)  acc1: 79.1667 (79.1334)  acc5: 92.7083 (93.0722)  time: 3.6769  data: 0.0004  max mem: 1649
+Test:  [510/521]  eta: 0:00:40  loss: nan (nan)  acc1: 78.1250 (79.1259)  acc5: 92.7083 (93.0671)  time: 3.6836  data: 0.0004  max mem: 1649
+Test:  [520/521]  eta: 0:00:03  loss: nan (nan)  acc1: 78.1250 (79.1240)  acc5: 93.7500 (93.0720)  time: 3.6184  data: 0.0004  max mem: 1649
+Test: Total time: 0:31:46 (3.6595 s / it)
+* Acc@1 79.124 Acc@5 93.072 loss nan
+Accuracy of the network on the 50000 test images: 79.1%
