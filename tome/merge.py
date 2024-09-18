@@ -20,7 +20,7 @@ def bipartite_soft_matching(
     r: int,
     class_token: bool = False,
     distill_token: bool = False,
-    cls_token_position: int = 0
+    cls_token_position: int = 0,
 ) -> Tuple[Callable, Callable]:
     """
     Applies ToMe with a balanced matching set (50%, 50%).
@@ -34,18 +34,18 @@ def bipartite_soft_matching(
 
     When enabled, the class token and distillation tokens won't get merged.
     """
-    
-    def remove_cls_token_from_tensor(t,cls_token_position):
-        cls_token = t[:,cls_token_position,:]
+
+    def remove_cls_token_from_tensor(t, cls_token_position):
+        cls_token = t[:, cls_token_position, :]
         cls_token_mask = torch.ones(t.size(1), dtype=torch.bool)
         cls_token_mask[cls_token_position] = False  # Set the mask to False at index `i`
-        tensor_without_cls_token = t[:,cls_token_mask,:]
+        tensor_without_cls_token = t[:, cls_token_mask, :]
         return tensor_without_cls_token, cls_token
 
     # def zipTensors(first_tensor, second_tensor,dim):
     #     assert len(first_tensor.shape) == len(second_tensor.shape), "tensors must have same amount of dimensions"
     #     assert first_tensor.shape[dim] - second_tensor.shape[dim] <=1, "len of dimensions to zip must not differ by more than one"
-        
+
     #     assert len(first_tensor.shape) in [2,3], "len(shape) must be in [2,3]
     #     assert dim < len(first_tensor.shape) and dim >0, "dim to zip must be absolute"
     #     if len(first_tensor.shape) == 2:
@@ -58,83 +58,107 @@ def bipartite_soft_matching(
     #         # return result
     #     # Do this for all possible combinations
     def zipTensors(first_tensor, second_tensor, dim_to_zip):
-        assert len(first_tensor.shape) == len(second_tensor.shape), "Tensors must have the same number of dimensions"
-        assert abs(first_tensor.shape[dim_to_zip] - second_tensor.shape[dim_to_zip]) <= 1, \
-            "The lengths of the dimensions to zip must not differ by more than one"
+        device = first_tensor.device
+        assert len(first_tensor.shape) == len(
+            second_tensor.shape
+        ), "Tensors must have the same number of dimensions"
+        assert (
+            abs(first_tensor.shape[dim_to_zip] - second_tensor.shape[dim_to_zip]) <= 1
+        ), "The lengths of the dimensions to zip must not differ by more than one"
         assert len(first_tensor.shape) in [2, 3], "len(shape) must be in [2, 3]"
-        assert 0 <= dim_to_zip < len(first_tensor.shape), "dim_to_zip must be within valid range"
-    
+        assert (
+            0 <= dim_to_zip < len(first_tensor.shape)
+        ), "dim_to_zip must be within valid range"
+
         if len(first_tensor.shape) == 2:  # Handle 2D tensors
             a, b = first_tensor.shape
             a2, b2 = second_tensor.shape
-    
+
             if dim_to_zip == 0:
                 min_dim_size = min(a, a2)
-                result = torch.empty((a + a2, b), dtype=first_tensor.dtype)
-                result[:min_dim_size*2, :][0::2, :] = first_tensor[:min_dim_size, :]
-                result[:min_dim_size*2, :][1::2, :] = second_tensor[:min_dim_size, :]
-    
+                result = torch.empty((a + a2, b), dtype=first_tensor.dtype).to(device)
+                result[: min_dim_size * 2, :][0::2, :] = first_tensor[:min_dim_size, :]
+                result[: min_dim_size * 2, :][1::2, :] = second_tensor[:min_dim_size, :]
+
                 if a > a2:
-                    result[min_dim_size * 2:, :] = first_tensor[min_dim_size:, :]
+                    result[min_dim_size * 2 :, :] = first_tensor[min_dim_size:, :]
                 elif a2 > a:
-                    result[min_dim_size * 2:, :] = second_tensor[min_dim_size:, :]
-    
+                    result[min_dim_size * 2 :, :] = second_tensor[min_dim_size:, :]
+
             elif dim_to_zip == 1:
                 min_dim_size = min(b, b2)
-                result = torch.empty((a, b + b2), dtype=first_tensor.dtype)
-                result[:,:min_dim_size*2][:, 0::2] = first_tensor[:, :min_dim_size]
-                result[:,:min_dim_size*2][:, 1::2] = second_tensor[:, :min_dim_size]
-    
+                result = torch.empty((a, b + b2), dtype=first_tensor.dtype).to(device)
+                result[:, : min_dim_size * 2][:, 0::2] = first_tensor[:, :min_dim_size]
+                result[:, : min_dim_size * 2][:, 1::2] = second_tensor[:, :min_dim_size]
+
                 if b > b2:
-                    result[:, min_dim_size * 2:] = first_tensor[:, min_dim_size:]
+                    result[:, min_dim_size * 2 :] = first_tensor[:, min_dim_size:]
                 elif b2 > b:
-                    result[:, min_dim_size * 2:] = second_tensor[:, min_dim_size:]
-    
+                    result[:, min_dim_size * 2 :] = second_tensor[:, min_dim_size:]
+
         elif len(first_tensor.shape) == 3:  # Handle 3D tensors
             a, b, c = first_tensor.shape
             a2, b2, c2 = second_tensor.shape
-    
+
             if dim_to_zip == 0:
                 min_dim_size = min(a, a2)
-                result = torch.empty((a + a2, b, c), dtype=first_tensor.dtype)
-                result[:min_dim_size*2, :, :][0::2, :, :] = first_tensor[:min_dim_size, :, :]
-                result[:min_dim_size*2, :, :][1::2, :, :] = second_tensor[:min_dim_size, :, :]
-    
+                result = torch.empty((a + a2, b, c), dtype=first_tensor.dtype).to(
+                    device
+                )
+                result[: min_dim_size * 2, :, :][0::2, :, :] = first_tensor[
+                    :min_dim_size, :, :
+                ]
+                result[: min_dim_size * 2, :, :][1::2, :, :] = second_tensor[
+                    :min_dim_size, :, :
+                ]
+
                 if a > a2:
-                    result[min_dim_size * 2:, :, :] = first_tensor[min_dim_size:, :, :]
+                    result[min_dim_size * 2 :, :, :] = first_tensor[min_dim_size:, :, :]
                 elif a2 > a:
-                    result[min_dim_size * 2:, :, :] = second_tensor[min_dim_size:, :, :]
-    
+                    result[min_dim_size * 2 :, :, :] = second_tensor[
+                        min_dim_size:, :, :
+                    ]
+
             elif dim_to_zip == 1:
                 min_dim_size = min(b, b2)
-                result = torch.empty((a, b + b2, c), dtype=first_tensor.dtype)
-                result[:, :min_dim_size*2, :][:, 0::2, :] = first_tensor[:, :min_dim_size, :]
-                result[:, :min_dim_size*2, :][:, 1::2, :] = second_tensor[:, :min_dim_size, :]
-    
+                result = torch.empty((a, b + b2, c), dtype=first_tensor.dtype).to(
+                    device
+                )
+                result[:, : min_dim_size * 2, :][:, 0::2, :] = first_tensor[
+                    :, :min_dim_size, :
+                ]
+                result[:, : min_dim_size * 2, :][:, 1::2, :] = second_tensor[
+                    :, :min_dim_size, :
+                ]
+
                 if b > b2:
-                    result[:, min_dim_size * 2:, :] = first_tensor[:, min_dim_size:, :]
+                    result[:, min_dim_size * 2 :, :] = first_tensor[:, min_dim_size:, :]
                 elif b2 > b:
-                    result[:, min_dim_size * 2:, :] = second_tensor[:, min_dim_size:, :]
-    
+                    result[:, min_dim_size * 2 :, :] = second_tensor[
+                        :, min_dim_size:, :
+                    ]
+
             elif dim_to_zip == 2:
                 min_dim_size = min(c, c2)
-                result = torch.empty((a, b, c + c2), dtype=first_tensor.dtype)
-                result[:, :, :min_dim_size*2][:, :, 0::2] = first_tensor[:, :, :min_dim_size]
-                result[:, :, :min_dim_size*2][:, :, 1::2] = second_tensor[:, :, :min_dim_size]
-    
+                result = torch.empty((a, b, c + c2), dtype=first_tensor.dtype).to(
+                    device
+                )
+                result[:, :, : min_dim_size * 2][:, :, 0::2] = first_tensor[
+                    :, :, :min_dim_size
+                ]
+                result[:, :, : min_dim_size * 2][:, :, 1::2] = second_tensor[
+                    :, :, :min_dim_size
+                ]
+
                 if c > c2:
-                    result[:, :, min_dim_size * 2:] = first_tensor[:, :, min_dim_size:]
+                    result[:, :, min_dim_size * 2 :] = first_tensor[:, :, min_dim_size:]
                 elif c2 > c:
-                    result[:, :, min_dim_size * 2:] = second_tensor[:, :, min_dim_size:]
-    
+                    result[:, :, min_dim_size * 2 :] = second_tensor[
+                        :, :, min_dim_size:
+                    ]
+
         return result
-    
-    
 
-
-
-
-    
     protected = 0
     if class_token:
         protected += 1
@@ -145,135 +169,160 @@ def bipartite_soft_matching(
     t = metric.shape[1]
     r_orig = r
     r = min(r, (t - protected) // 2)
-    assert r== r_orig, "cls token position tracking not yet done for this case"
+    assert r == r_orig, "cls token position tracking not yet done for this case"
 
     if r <= 0:
         return do_nothing, do_nothing
 
     with torch.no_grad():
-        metric, _ = remove_cls_token_from_tensor(metric,cls_token_position)
-        
+        metric, _ = remove_cls_token_from_tensor(metric, cls_token_position)
+
         metric = metric / metric.norm(dim=-1, keepdim=True)
         # wenn token als metric: dims: batch, tokens, emb_dim
-        a, b = metric[..., ::2, :], metric[..., 1::2, :] # vergleiche gerade und ungerade tokens (tokens dim=1)
-        scores = a @ b.transpose(-1, -2) #ähnlichkeit berechnen (scalar)
+        a, b = (
+            metric[..., ::2, :],
+            metric[..., 1::2, :],
+        )  # vergleiche gerade und ungerade tokens (tokens dim=1)
+        scores = a @ b.transpose(-1, -2)  # ähnlichkeit berechnen (scalar)
         # print(f"scores {scores}")
 
         # TESTING LINES
         # scores =  create_tensor_with_ones_at_last_positions(scores)
         # '-----------------
-        
+
         # wenn token als metric: dims: batch, tokens/2, tokens/2
         if distill_token:
-            scores[..., :, 0] = -math.inf 
+            scores[..., :, 0] = -math.inf
 
-        node_max, node_idx = scores.max(dim=-1) # ?für alle token: ähnlichster andrer token id, score
+        node_max, node_idx = scores.max(
+            dim=-1
+        )  # ?für alle token: ähnlichster andrer token id, score
         # print(f"node_max{node_max.shape}")
         # print(f"node_max{node_max}")
         # print(f"node_idx{node_idx.shape}")
         # print(f"node_idx{node_idx}")
-        
-        edge_idx = node_max.argsort(dim=-1, descending=True)[..., None] # absteigend: index der a token mit b token der höchsten ähnlichkeit
+
+        edge_idx = node_max.argsort(dim=-1, descending=True)[
+            ..., None
+        ]  # absteigend: index der a token mit b token der höchsten ähnlichkeit
         # print(f"edge_idx`n {edge_idx.shape}")
         # print(f"edge_idx`n {edge_idx}")
         # merged_tokens_
 
         unm_idx = edge_idx[..., r:, :]  # a tokens die nicht gemerged werden
         # print(f"unm_idx`n {unm_idx}")
-        
+
         src_idx = edge_idx[..., :r, :]  # a tokens to merge werden hier ausgewählt
-        #TODO falls reihenfolge rehalten bleiben würde, hier notieren wie viele tokens links weggemerged werden. Ansonsten freestyle und cls token pos tracken only
+        # TODO falls reihenfolge rehalten bleiben würde, hier notieren wie viele tokens links weggemerged werden. Ansonsten freestyle und cls token pos tracken only
         # print(f"src_idx`n {src_idx.shape}")
         # print(f"src_idx`n {src_idx}")
-        
-        dst_idx = node_idx[..., None].gather(dim=-2, index=src_idx) #?
+
+        dst_idx = node_idx[..., None].gather(dim=-2, index=src_idx)  # ?
         # print(f"dst_idx`n {dst_idx.shape}")
         # print(f"dst_idx`n {dst_idx}")
-        
+
         # if class_token:
-            # cls_token_position
+        # cls_token_position
     # Need to write this for vim new due to cls token not being at the start
     #         Sort to ensure the class token is at the start
-            # unm_idx = unm_idx.sort(dim=1)[0]
-            # print(f"unm_idx`n {unm_idx}")
-            
-    def merge_vim_1(x: torch.Tensor, mode="mean"):
-        # print(f"merge input: {x.shape}")
-        
-        
-        x, cls_token = remove_cls_token_from_tensor(x,cls_token_position)
-        src, dst = x[..., ::2, :], x[..., 1::2, :]
-        b, t1, c = src.shape
-        _, t2, _ = dst.shape
-        src_merged_removed = torch.ones(n, t1-r, c)
-        for i in range(b):
-            mask = torch.ones(src[0].size(0), dtype=torch.bool)
-            mask[src_idx.squeeze(-1)[i]] = False# see odd src_idx 
-            x = (src[i])[mask,:]
-            src_merged_removed[i] = x
-            #fit the merged tokens right in here at where the original src token was/one of the original tokens was
-        # Need to reorder unm via unm_idx (opposed to the sorting via scores
-        # or just use original src with remove/slice src_idx now)
-        src_merged_removed = src_merged_removed.to('cuda:0')
-        src = src.gather(dim=-2, index=src_idx.expand(n, r, c)) 
-        #arguably doesn't matter here due to src tokens being mixed into dst
-        dst = dst.scatter_reduce(-2, dst_idx.expand(n, r, c), src, reduce=mode)
-        #No direct way of knowing the original indexes just from this?
-        # Need src_idx, dst_idx tensor to locate wanted position of merged token
-        #Additionally to order: need to keep track of cls token..
-        t_no_cls =  torch.cat([src_merged_removed, dst], dim=1)
-        # print(f"cls token shape pre: {cls_token.shape}")
-        cls_exp = cls_token.unsqueeze(1)
-        # print(f"cls token shape post unsqueeze: {cls_exp.shape}")
-        
-        result = torch.cat((t_no_cls[:,:(t1+t2-r)//2,:], cls_exp,t_no_cls[:,(t1+t2-r)//2:,:]), dim=1)
-        # print(f"result of merge: {result.shape}")
-        return result, n//2 #cls_pos
-        # if distill_token:
-        #     return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
-        # else:
-            # return torch.cat([unm, dst], dim=1)
+    # unm_idx = unm_idx.sort(dim=1)[0]
+    # print(f"unm_idx`n {unm_idx}")
 
-    def merge(x: torch.Tensor, mode="mean"): #merge_vim_plan_one
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # def merge_vim_1(x: torch.Tensor, mode="mean"):
+    #     # print(f"merge input: {x.shape}")
+
+    #     x, cls_token = remove_cls_token_from_tensor(x,cls_token_position)
+    #     src, dst = x[..., ::2, :], x[..., 1::2, :]
+    #     b, t1, c = src.shape
+    #     _, t2, _ = dst.shape
+    #     src_merged_removed = torch.ones(n, t1-r, c)
+    #     for i in range(b):
+    #         mask = torch.ones(src[0].size(0), dtype=torch.bool)
+    #         mask[src_idx.squeeze(-1)[i]] = False# see odd src_idx
+    #         x = (src[i])[mask,:]
+    #         src_merged_removed[i] = x
+    #         #fit the merged tokens right in here at where the original src token was/one of the original tokens was
+    #     # Need to reorder unm via unm_idx (opposed to the sorting via scores
+    #     # or just use original src with remove/slice src_idx now)
+    #     src_merged_removed = src_merged_removed.to('cuda:0')
+    #     src = src.gather(dim=-2, index=src_idx.expand(n, r, c))
+    #     #arguably doesn't matter here due to src tokens being mixed into dst
+    #     dst = dst.scatter_reduce(-2, dst_idx.expand(n, r, c), src, reduce=mode)
+    #     #No direct way of knowing the original indexes just from this?
+    #     # Need src_idx, dst_idx tensor to locate wanted position of merged token
+    #     #Additionally to order: need to keep track of cls token..
+    #     t_no_cls =  torch.cat([src_merged_removed, dst], dim=1)
+    #     # print(f"cls token shape pre: {cls_token.shape}")
+    #     cls_exp = cls_token.unsqueeze(1)
+    #     # print(f"cls token shape post unsqueeze: {cls_exp.shape}")
+
+    #     result = torch.cat((t_no_cls[:,:(t1+t2-r)//2,:], cls_exp,t_no_cls[:,(t1+t2-r)//2:,:]), dim=1)
+    #     # print(f"result of merge: {result.shape}")
+    #     return result, n//2 #cls_pos
+    #     # if distill_token:
+    #     #     return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
+    #     # else:
+    #         # return torch.cat([unm, dst], dim=1)
+
+    def merge(x: torch.Tensor, mode="mean"):  # merge_vim_plan_one
+        device = x.device
         # print(f"merge input: {x.shape}")
-        
-        
-        x, cls_token = remove_cls_token_from_tensor(x,cls_token_position)
+
+        x, cls_token = remove_cls_token_from_tensor(x, cls_token_position)
         src_original, dst_original = x[..., ::2, :], x[..., 1::2, :]
         b, t1, c = src_original.shape
         _, t2, _ = dst_original.shape
 
         # Mask of src_size indicationg if the token will remain unmerged
-        mask_src_tokens_umnerged = torch.ones((b,t1), dtype=torch.bool).to(device)
-        mask_dst_tokens = torch.ones((b,t2), dtype=torch.bool).to(device)
-        for i in range(b):
-            mask_src_tokens_umnerged[i][src_idx.squeeze(-1)[i]] = False
+        mask_src_tokens_umnerged = torch.ones((b, t1), dtype=torch.bool).to(device)
+        mask_dst_tokens = torch.ones((b, t2), dtype=torch.bool).to(device)
+
+        # ----------------------------------
+        # Inefficient
+        # for i in range(b):
+        #     mask_src_tokens_umnerged[i][src_idx.squeeze(-1)[i]] = False
+        # Efficient
+        batch_idx = torch.arange(b).unsqueeze(1).to(device)
+        mask_src_tokens_umnerged[batch_idx, src_idx.squeeze(-1)] = False
+        # ---------------------------------
+
         # Mask above blown up to be applied to the zipped tensors
-        full_merge_mask = zipTensors(mask_src_tokens_umnerged, mask_dst_tokens, dim_to_zip = 1)
-        
-         
+        full_merge_mask = zipTensors(
+            mask_src_tokens_umnerged, mask_dst_tokens, dim_to_zip=1
+        ).to(device)
+
         # Merge r src tokens into dst tensor
         # src_merged_removed = src_merged_removed.to('cuda:0')
-        src = src_original.gather(dim=-2, index=src_idx.expand(b, r, c)) 
+        src = src_original.gather(dim=-2, index=src_idx.expand(b, r, c))
         dst = dst_original.scatter_reduce(-2, dst_idx.expand(b, r, c), src, reduce=mode)
         _, t2_new, _ = dst.shape
-        assert (t2_new == t2) ,"dst dimension should be same after reduce"
+        assert t2_new == t2, "dst dimension should be same after reduce"
         # Combine original src, new dst, remove merged tokens via mask
-        temp = zipTensors(src_original, dst, dim_to_zip = 1)
-        merged_tensor_correct_order = torch.zeros(b,t1+t2-r,c).to(device)
+        temp = zipTensors(src_original, dst, dim_to_zip=1)
+        merged_tensor_correct_order = torch.zeros(b, t1 + t2 - r, c).to(device)
+
+        # ----------------------------------
+        # Inefficient
         for i in range(b):
-            merged_tensor_correct_order[i] = temp[i][full_merge_mask[i],:]
-        
+            merged_tensor_correct_order[i] = temp[i][full_merge_mask[i], :]
+        # Efficient
+        # ---------------------------------
+
         # print(f"cls token shape pre: {cls_token.shape}")
         cls_token_expanded = cls_token.unsqueeze(1)
-        new_cls_token_position = (t1+t2-r+1)//2
+        new_cls_token_position = (t1 + t2 - r + 1) // 2
         # print(f"cls token shape post unsqueeze: {cls_token_expanded.shape}")
-        
-        result = torch.cat((merged_tensor_correct_order[:,:new_cls_token_position,:], cls_token_expanded,merged_tensor_correct_order[:,new_cls_token_position:,:]), dim=1)
+
+        result = torch.cat(
+            (
+                merged_tensor_correct_order[:, :new_cls_token_position, :],
+                cls_token_expanded,
+                merged_tensor_correct_order[:, new_cls_token_position:, :],
+            ),
+            dim=1,
+        )
         # print(f"Merged tensor shape: {result.shape}")
-        return result, new_cls_token_position 
-    
+        return result, new_cls_token_position
 
     # def merge(x: torch.Tensor, mode="mean") -> torch.Tensor:
     #     src, dst = x[..., ::2, :], x[..., 1::2, :]
@@ -286,8 +335,6 @@ def bipartite_soft_matching(
     #         return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
     #     else:
     #         return torch.cat([unm, dst], dim=1)
-
-
 
     # def merge(x: torch.Tensor, mode="mean") -> torch.Tensor:
     #     print_full_tensor=True
@@ -334,9 +381,8 @@ def bipartite_soft_matching(
     #         print(f"Final result tensor:\n{result}")
     #     else:
     #         print(f"Final result shape: {result.shape}")
-        # return result
+    # return result
 
-    
     def merge_residual(x: torch.Tensor, mode="mean") -> torch.Tensor:
         src, dst = x[..., ::2, :], x[..., 1::2, :]
         n, t1, c = src.shape
@@ -348,7 +394,6 @@ def bipartite_soft_matching(
             return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
         else:
             return torch.cat([unm, dst], dim=1)
-        
 
     def unmerge(x: torch.Tensor) -> torch.Tensor:
         unm_len = unm_idx.shape[1]
