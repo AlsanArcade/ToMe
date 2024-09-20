@@ -139,12 +139,12 @@ class ToMeBlock(models_mamba.Block):
                 )
             hidden_orig = x
             # x, self._tome_info["size"] = merge_wavg(merge, x, self._tome_info["size"])
-            x, self._tome_info["cls_token_position"] = merge(x)
+            x = merge(x)
             # print(f"delta sum hidden: {hidden_orig.sum()-x.sum()} , shapes: {hidden_orig.shape}{x.shape}") #{unmerge(x).shape}")
             self.compare_tensors(hidden_orig, x)
             # self.compare_tensors(hidden_orig,(x))
             residual_orig = residual
-            residual, _ = merge(residual)
+            residual = merge(residual)
             # residual, self._tome_info["size_residual"] = merge(residual, self._tome_info["size_residual"])
             # print(f"delta sum residual: {residual_orig.sum()-residual.sum()}, shapes: {residual_orig.shape}{unmerge(residual).shape}")
             # residual = merge(residual) -> macht gerade kein unterschied -> iwo muss ein Fehler sein
@@ -376,7 +376,8 @@ def apply_patch(
     ToMeVisionMamba = make_tome_class(model.__class__)
 
     model.__class__ = ToMeVisionMamba
-    model.r = 15  # (1, -1.0) # 0
+    model.r = 2  # (1, -1.0) # 0
+    print(f"\nr parameter is {model.r}\n")
     model._tome_info = {
         "r": model.r,
         "size": None,
