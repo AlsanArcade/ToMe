@@ -362,7 +362,7 @@ def make_tome_class(transformer_class):
             cls_tokens = select_specific_tokens_per_batch_3d(
                 hidden_states, self._tome_info["cls_token_positionS"].unsqueeze(1)
             ).squeeze(1)
-            cls_tokens_2 = hidden_states[:, self._tome_info["cls_token_position"], :]
+            # cls_tokens_2 = hidden_states[:, self._tome_info["cls_token_position"], :]
             return cls_tokens
 
         def forward(
@@ -409,7 +409,7 @@ def apply_patch(
     ToMeVisionMamba = make_tome_class(model.__class__)
 
     model.__class__ = ToMeVisionMamba
-    model.r = 5  # (1, -1.0) # 0
+    model.r = 25  # (1, -1.0) # 0
     print(f"\nr parameter is {model.r}\n")
     model._tome_info = {
         "r": model.r,
