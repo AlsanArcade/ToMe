@@ -56,18 +56,11 @@ def do_nothing(x, mode=None):
 def get_current_cls_token_pos_from_source(original_cls_token_positions, source):
     if source == None:
         return original_cls_token_positions
-
+    orig_pos = original_cls_token_positions[0]  # always same for each batch elem
     new_pos_of_orig_tokens = source.argmax(1)
-    original_cls_pos_as_token_per_batch = original_cls_token_positions.unsqueeze(1)
+    cl_pos_new = new_pos_of_orig_tokens[:, orig_pos]
 
-    new_cls_token_pos = select_specific_tokens_per_batch_2d(
-        new_pos_of_orig_tokens, original_cls_pos_as_token_per_batch
-    )  # should never get merged-> only one orig token corresponds to new cls token
-    new_cls_token_pos_squeezed_1d_tokens_dim = new_cls_token_pos.squeeze(
-        1
-    )  # should never get merged-> only one orig token corresponds to new cls token
-
-    return new_cls_token_pos_squeezed_1d_tokens_dim
+    return cl_pos_new
 
 
 def bipartite_soft_matching(
