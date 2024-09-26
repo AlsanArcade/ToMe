@@ -72,6 +72,29 @@ from tome.merge import bipartite_soft_matching, merge_source, merge_wavg
 from tome.utils import parse_r
 
 
+def select_specific_tokens_per_batch_3d(data, tokens_to_select_per_batch):
+    """
+    Per batch, the tokens that are listed in tokens_to_select_per_batch[batch] are selected.
+    tokens_to_select_per_batch[batch].shape[0] can be smaller, equal, or larger than data[batch].shape[0]
+    <> You can select every token zero, one or multiple times
+    """
+    assert (
+        len(tokens_to_select_per_batch.shape) == 2
+    ), "tokens to select must be a 2d tensor, if there is only one token per batch, pass it as single element list"
+    assert len(data.shape) == 3, "input data needs to be 3d"
+    assert (
+        tokens_to_select_per_batch.shape[0] == data.shape[0]
+    ), "batch size must be same"
+    assert torch.all(
+        (0 <= tokens_to_select_per_batch) & (tokens_to_select_per_batch < data.shape[1])
+    ), "tokens to choose must be valid token indices of data"
+    device = data.device
+    batch_size = data.shape[0]
+    batch_id_for_join = torch.arange(batch_size).unsqueeze(1).to(device)
+    data_of_selected_tokens = data[batch_id_for_join, tokens_to_select_per_batch, :]
+    return data_of_selected_tokens
+
+
 class ToMeBlock(models_mamba.Block):
     """
     Modifications:
@@ -124,19 +147,22 @@ class ToMeBlock(models_mamba.Block):
         r = self._tome_info["r"].pop(0)
         if r > 0:
             # Apply ToMe here
-            merge, unmerge, self._tome_info["cls_token_position"] = (
-                bipartite_soft_matching(
-                    metric,
-                    r,
-                    self._tome_info["class_token"],
-                    self._tome_info["distill_token"],
-                    self._tome_info["cls_token_position"],
-                )
+            merge, _ = bipartite_soft_matching(
+                metric,
+                r,
+                self._tome_info["class_token"],
+                self._tome_info["distill_token"],
+                self._tome_info["cls_token_positionS"],
+                self._tome_info["cls_token_position"],
             )
             if self._tome_info["trace_source"]:
                 self._tome_info["source"] = merge_source(
                     merge, x, self._tome_info["source"]
                 )
+            self._tome_info["cls_token_positionS"] = self._tome_info["source"].argmax(
+                1
+            )[:, self._tome_info["cls_token_position"]]
+
             hidden_orig = x
             # x, self._tome_info["size"] = merge_wavg(merge, x, self._tome_info["size"])
             x = merge(x)
@@ -288,6 +314,9 @@ def make_tome_class(transformer_class):
             self._tome_info["cls_token_position"] = (
                 M // 2
             )  # always in a in bipartitet softmatching
+            self._tome_info["cls_token_positionS"] = torch.tensor(
+                self._tome_info["cls_token_position"]
+            ).repeat(B, 1)
 
             # print("token pos", self._tome_info["cls_token_position"])
             # add cls token in the middle
@@ -330,7 +359,11 @@ def make_tome_class(transformer_class):
             )
 
             # return only cls token if it exists
-            return hidden_states[:, self._tome_info["cls_token_position"], :]
+            cls_tokens = select_specific_tokens_per_batch_3d(
+                hidden_states, self._tome_info["cls_token_positionS"].unsqueeze(1)
+            ).squeeze(1)
+            cls_tokens_2 = hidden_states[:, self._tome_info["cls_token_position"], :]
+            return cls_tokens
 
         def forward(
             self,
@@ -376,7 +409,7 @@ def apply_patch(
     ToMeVisionMamba = make_tome_class(model.__class__)
 
     model.__class__ = ToMeVisionMamba
-    model.r = 2  # (1, -1.0) # 0
+    model.r = 5  # (1, -1.0) # 0
     print(f"\nr parameter is {model.r}\n")
     model._tome_info = {
         "r": model.r,

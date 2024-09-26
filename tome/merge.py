@@ -20,7 +20,8 @@ def bipartite_soft_matching(
     r: int,
     class_token: bool = False,
     distill_token: bool = False,
-    cls_token_position: int = 0,
+    cls_token_positionS=None,
+    original_cls_token_position: int = 0,
 ) -> Tuple[Callable, Callable]:
     """
     Applies ToMe with a balanced matching set (50%, 50%).
@@ -35,12 +36,39 @@ def bipartite_soft_matching(
     When enabled, the class token and distillation tokens won't get merged.
     """
 
-    def remove_cls_token_from_tensor(t, cls_token_position):
-        cls_token = t[:, cls_token_position, :]
-        cls_token_mask = torch.ones(t.size(1), dtype=torch.bool)
-        cls_token_mask[cls_token_position] = False  # Set the mask to False at index `i`
-        tensor_without_cls_token = t[:, cls_token_mask, :]
-        return tensor_without_cls_token, cls_token
+    def set_cls_token_scores_to_mininf(scores):
+        device = scores.device
+        cls_pos = cls_token_positionS  # dim: b, 1
+        x = cls_pos.max()
+        y = cls_pos.min()
+        z = scores.shape
+        cls_is_in_a = cls_pos % 2 == 0
+        cls_is_in_b = ~cls_is_in_a
+        batch_idx = torch.arange(cls_pos.shape[0]).unsqueeze(1).to(device)
+
+        cls_in_a_batch_idx = batch_idx[
+            cls_is_in_a
+        ]  # get batch idx where cls token is in a
+        if len(cls_in_a_batch_idx > 0):
+            cls_pos_that_will_end_up_in_a = cls_pos[cls_is_in_a]
+            cls_pos_in_a = cls_pos_that_will_end_up_in_a // 2
+            cls_in_a_pos_as_tokens_per_batch = cls_pos_in_a.unsqueeze(1)
+            scores[cls_in_a_batch_idx, cls_in_a_pos_as_tokens_per_batch, :] = (
+                -math.inf
+            )  # set similarity scores with cls token to -inf to avoind merging
+
+        cls_in_b_batch_idx = batch_idx[
+            cls_is_in_b
+        ]  # get batch idx where cls token is in a
+        if len(cls_in_b_batch_idx > 0):
+            cls_pos_that_will_end_up_in_b = cls_pos[cls_is_in_b]
+            cls_pos_in_b = cls_pos_that_will_end_up_in_b // 2
+            cls_in_b_pos_as_tokens_per_batch = cls_pos_in_b.unsqueeze(1)
+            scores[cls_in_b_batch_idx, :, cls_in_b_pos_as_tokens_per_batch] = (
+                -math.inf
+            )  # set similarity scores with cls token to -inf to avoid merging
+
+        return scores
 
     def zipTensors(first_tensor, second_tensor, dim_to_zip):
         device = first_tensor.device
@@ -161,9 +189,6 @@ def bipartite_soft_matching(
 
     with torch.no_grad():
 
-        metric, _ = remove_cls_token_from_tensor(metric, cls_token_position)
-        new_cls_token_position = (metric.shape[1] - r + 1) // 2
-
         metric = metric / metric.norm(dim=-1, keepdim=True)
         a, b = (
             metric[..., ::2, :],
@@ -171,7 +196,8 @@ def bipartite_soft_matching(
         )  # vergleiche gerade und ungerade tokens (tokens dim=1)
         scores = a @ b.transpose(-1, -2)  # ähnlichkeit berechnen (scalar)
         # print(f"scores {scores}")
-
+        scores_prev = scores
+        scores = set_cls_token_scores_to_mininf(scores)
         if distill_token:
             scores[..., :, 0] = -math.inf
 
@@ -189,7 +215,6 @@ def bipartite_soft_matching(
         device = x.device
         # print(f"merge input: {x.shape}")
 
-        x, cls_token = remove_cls_token_from_tensor(x, cls_token_position)
         src_original, dst_original = x[..., ::2, :], x[..., 1::2, :]
         b, t1, c = src_original.shape
         _, t2, _ = dst_original.shape
@@ -223,17 +248,7 @@ def bipartite_soft_matching(
         # Efficient
         # ---------------------------------
 
-        cls_token_expanded = cls_token.unsqueeze(1)
-
-        result = torch.cat(
-            (
-                merged_tensor_correct_order[:, :new_cls_token_position, :],
-                cls_token_expanded,
-                merged_tensor_correct_order[:, new_cls_token_position:, :],
-            ),
-            dim=1,
-        )
-        return result
+        return merged_tensor_correct_order
 
     def merge_residual(x: torch.Tensor, mode="mean") -> torch.Tensor:
         src, dst = x[..., ::2, :], x[..., 1::2, :]
@@ -262,7 +277,7 @@ def bipartite_soft_matching(
 
         return out
 
-    return merge, unmerge, new_cls_token_position
+    return merge, unmerge
 
 
 def merge_wavg(
@@ -285,16 +300,16 @@ def merge_wavg(
 def merge_source(
     merge: Callable, x: torch.Tensor, source: torch.Tensor = None
 ) -> torch.Tensor:
-    # """
-    # For source tracking. Source is an adjacency matrix between the initial tokens and final merged groups.
-    # x is used to find out how many tokens there are in case the source is None.
-    # """
-    # # print(f"x size: {x.shape}")
-    # if source is None:
-    #     n, t, _ = x.shape
-    #     source = torch.eye(t, device=x.device)[None, ...].expand(n, t, t)
-    #     # print(f"Init source size: {source.shape}")
-    # source = merge(source, mode="amax")
-    # # print(f"New source size: {source.shape}")
+    """
+    For source tracking. Source is an adjacency matrix between the initial tokens and final merged groups.
+    x is used to find out how many tokens there are in case the source is None.
+    """
+    # print(f"x size: {x.shape}")
+    if source is None:
+        n, t, _ = x.shape
+        source = torch.eye(t, device=x.device)[None, ...].expand(n, t, t)
+        # print(f"Init source size: {source.shape}")
+    source = merge(source, mode="amax")
+    # print(f"New source size: {source.shape}")
 
     return source
